@@ -1,0 +1,33 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <UserSecretsId>a13eb60e-7670-47a3-bf2c-a3e7901d7c3e</UserSecretsId>
+    <DockerDefaultTargetOS>Linux</DockerDefaultTargetOS>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="CloudinaryDotNet" Version="1.29.1" />
+    <PackageReference Include="FluentValidation.AspNetCore" Version="11.3.1" />
+    <PackageReference Include="Microsoft.VisualStudio.Azure.Containers.Tools.Targets" Version="1.23.0" />
+    <PackageReference Include="Swashbuckle.AspNetCore" Version="10.1.7" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Folder Include="Entities\" />
+    <Folder Include="DTOs\" />
+    <Folder Include="Data\" />
+    <Folder Include="Helpers\" />
+    <Folder Include="Middlewares\" />
+    <Folder Include="Enums\" />
+    <Folder Include="Mappings\" />
+    <Folder Include="Repositories\" />
+    <Folder Include="Services\Interfaces\" />
+    <Folder Include="Services\Implementations\" />
+    <Folder Include="Settings\" />
+    <Folder Include="Validations\" />
+  </ItemGroup>
+
+</Project>
