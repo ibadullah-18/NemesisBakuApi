@@ -1,0 +1,335 @@
+﻿using System.Security.Claims;
+using System.Text;
+using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.Mvc;
+using Microsoft.EntityFrameworkCore;
+using NemesisBakuApi.Data;
+using NemesisBakuApi.DTOs.Order;
+using NemesisBakuApi.Entities;
+using NemesisBakuApi.Enums;
+using NemesisBakuApi.Helpers;
+using NemesisBakuApi.Services.Interfaces;
+
+namespace NemesisBakuApi.Controllers;
+
+[ApiController]
+[Route("api/[controller]")]
+[Authorize]
+public class OrdersController : ControllerBase
+{
+    private readonly AppDbContext _context;
+    private readonly IWhatsAppService _whatsAppService;
+    private readonly IConfiguration _configuration;
+
+    public OrdersController(
+        AppDbContext context,
+        IWhatsAppService whatsAppService,
+        IConfiguration configuration)
+    {
+        _context = context;
+        _whatsAppService = whatsAppService;
+        _configuration = configuration;
+    }
+
+    private Guid GetUserId()
+    {
+        var userId = User.FindFirstValue(ClaimTypes.NameIdentifier);
+
+        if (string.IsNullOrWhiteSpace(userId))
+            throw new UnauthorizedAccessException();
+
+        return Guid.Parse(userId);
+    }
+
+    [HttpPost]
+    public async Task<IActionResult> CreateOrder(CreateOrderDto dto)
+    {
+        var userId = GetUserId();
+
+        if (dto.Items == null || !dto.Items.Any())
+            return BadRequest(ApiResponse<string>.Fail("Sifariş üçün məhsul seçilməyib"));
+
+        if (dto.DeliveryType == DeliveryType.HomeDelivery)
+        {
+            if (string.IsNullOrWhiteSpace(dto.AddressText))
+                return BadRequest(ApiResponse<string>.Fail("Ünvana çatdırılma üçün ünvan məcburidir"));
+
+            if (!dto.DeliveryDate.HasValue)
+                return BadRequest(ApiResponse<string>.Fail("Çatdırılma tarixi seçilməlidir"));
+
+            if (string.IsNullOrWhiteSpace(dto.DeliveryTimeRange))
+                return BadRequest(ApiResponse<string>.Fail("Çatdırılma saat aralığı seçilməlidir"));
+        }
+
+        if (dto.DeliveryType == DeliveryType.PickupFromStore)
+        {
+            dto.DeliveryPrice = 0;
+            dto.AddressText = null;
+            dto.Latitude = null;
+            dto.Longitude = null;
+        }
+
+        await using var transaction = await _context.Database.BeginTransactionAsync();
+
+        var basketItemIds = dto.Items.Select(x => x.BasketItemId).ToList();
+
+        var basketItems = await _context.BasketItems
+            .Include(x => x.Product)
+                .ThenInclude(p => p.Images)
+            .Include(x => x.ProductVariant)
+                .ThenInclude(v => v.Size)
+            .Include(x => x.ProductVariant)
+                .ThenInclude(v => v.Color)
+            .Where(x =>
+                x.UserId == userId &&
+                basketItemIds.Contains(x.Id))
+            .ToListAsync();
+
+        if (basketItems.Count != basketItemIds.Count)
+            return BadRequest(ApiResponse<string>.Fail("Səbətdə seçilmiş məhsullardan biri tapılmadı"));
+
+        foreach (var item in basketItems)
+        {
+            if (!item.Product.IsActive)
+                return BadRequest(ApiResponse<string>.Fail($"{item.Product.Name} aktiv deyil"));
+
+            if (!item.ProductVariant.IsActive)
+                return BadRequest(ApiResponse<string>.Fail($"{item.Product.Name} üçün seçilmiş razmer/rəng aktiv deyil"));
+
+            if (item.ProductVariant.StockCount < item.Quantity)
+                return BadRequest(ApiResponse<string>.Fail($"{item.Product.Name} üçün stok kifayət deyil"));
+        }
+
+        decimal totalProductPrice = 0;
+
+        var order = new Order
+        {
+            UserId = userId,
+            OrderNumber = OrderNumberGenerator.Generate(),
+
+            CustomerFullName = dto.CustomerFullName,
+            CustomerPhoneNumber = dto.CustomerPhoneNumber,
+
+            DeliveryType = dto.DeliveryType,
+            PaymentMethod = dto.PaymentMethod,
+
+            AddressText = dto.AddressText,
+            Latitude = dto.Latitude,
+            Longitude = dto.Longitude,
+
+            DeliveryDate = dto.DeliveryDate,
+            DeliveryTimeRange = dto.DeliveryTimeRange,
+
+            DeliveryPrice = dto.DeliveryPrice,
+            Note = dto.Note,
+
+            Status = OrderStatus.Pending
+        };
+
+        foreach (var basketItem in basketItems)
+        {
+            var unitPrice =
+                basketItem.Product.IsDiscounted && basketItem.Product.DiscountPrice.HasValue
+                    ? basketItem.Product.DiscountPrice.Value
+                    : basketItem.Product.Price;
+
+            var itemTotal = unitPrice * basketItem.Quantity;
+            totalProductPrice += itemTotal;
+
+            var mainImage = basketItem.Product.Images
+                .OrderByDescending(x => x.IsMain)
+                .ThenBy(x => x.Order)
+                .Select(x => x.ImageUrl)
+                .FirstOrDefault();
+
+            var productLink = $"https://nemesisbaku.az/products/{basketItem.ProductId}";
+
+            order.Items.Add(new OrderItem
+            {
+                ProductId = basketItem.ProductId,
+                ProductVariantId = basketItem.ProductVariantId,
+
+                ProductName = basketItem.Product.Name,
+                ProductCode = basketItem.Product.ProductCode,
+
+                SizeValue = basketItem.ProductVariant.Size.Value,
+                ColorName = basketItem.ProductVariant.Color.Name,
+
+                UnitPrice = unitPrice,
+                Quantity = basketItem.Quantity,
+                TotalPrice = itemTotal,
+
+                ProductImageUrl = mainImage,
+                ProductLink = productLink
+            });
+
+            basketItem.ProductVariant.StockCount -= basketItem.Quantity;
+
+            basketItem.IsDeleted = true;
+            basketItem.UpdatedAt = DateTime.UtcNow;
+        }
+
+        order.TotalProductPrice = totalProductPrice;
+        order.PromoDiscountAmount = 0;
+        order.TotalPrice = totalProductPrice + order.DeliveryPrice;
+
+        _context.Orders.Add(order);
+
+        await _context.SaveChangesAsync();
+        await transaction.CommitAsync();
+
+        var message = BuildOrderWhatsAppMessage(order);
+
+        var sent = await _whatsAppService.SendOrderNotificationAsync(message);
+
+        order.IsWhatsappMessageSent = sent;
+        order.WhatsappMessageSentAt = sent ? DateTime.UtcNow : null;
+
+        await _context.SaveChangesAsync();
+
+        return Ok(ApiResponse<Guid>.Ok(order.Id, "Sifariş uğurla yaradıldı"));
+    }
+
+    [HttpGet("my")]
+    public async Task<IActionResult> GetMyOrders()
+    {
+        var userId = GetUserId();
+
+        var orders = await _context.Orders
+            .Where(x => x.UserId == userId)
+            .OrderByDescending(x => x.CreatedAt)
+            .Select(x => new OrderListDto
+            {
+                Id = x.Id,
+                OrderNumber = x.OrderNumber,
+                TotalPrice = x.TotalPrice,
+                DeliveryType = x.DeliveryType,
+                PaymentMethod = x.PaymentMethod,
+                Status = x.Status,
+                CreatedAt = x.CreatedAt
+            })
+            .ToListAsync();
+
+        return Ok(ApiResponse<List<OrderListDto>>.Ok(orders));
+    }
+
+    [HttpGet("{id}")]
+    public async Task<IActionResult> GetOrderDetail(Guid id)
+    {
+        var userId = GetUserId();
+
+        var order = await _context.Orders
+            .Include(x => x.Items)
+            .FirstOrDefaultAsync(x => x.Id == id && x.UserId == userId);
+
+        if (order == null)
+            return NotFound(ApiResponse<string>.Fail("Sifariş tapılmadı"));
+
+        var dto = new OrderDetailDto
+        {
+            Id = order.Id,
+            OrderNumber = order.OrderNumber,
+
+            CustomerFullName = order.CustomerFullName,
+            CustomerPhoneNumber = order.CustomerPhoneNumber,
+
+            DeliveryType = order.DeliveryType,
+            PaymentMethod = order.PaymentMethod,
+
+            AddressText = order.AddressText,
+            Latitude = order.Latitude,
+            Longitude = order.Longitude,
+
+            DeliveryDate = order.DeliveryDate,
+            DeliveryTimeRange = order.DeliveryTimeRange,
+
+            DeliveryPrice = order.DeliveryPrice,
+            Note = order.Note,
+
+            TotalProductPrice = order.TotalProductPrice,
+            PromoDiscountAmount = order.PromoDiscountAmount,
+            TotalPrice = order.TotalPrice,
+
+            Status = order.Status,
+
+            IsWhatsappMessageSent = order.IsWhatsappMessageSent,
+            WhatsappMessageSentAt = order.WhatsappMessageSentAt,
+
+            CreatedAt = order.CreatedAt,
+
+            Items = order.Items.Select(x => new OrderItemDto
+            {
+                ProductId = x.ProductId,
+                ProductVariantId = x.ProductVariantId,
+
+                ProductName = x.ProductName,
+                ProductCode = x.ProductCode,
+
+                SizeValue = x.SizeValue,
+                ColorName = x.ColorName,
+
+                UnitPrice = x.UnitPrice,
+                Quantity = x.Quantity,
+                TotalPrice = x.TotalPrice,
+
+                ProductImageUrl = x.ProductImageUrl,
+                ProductLink = x.ProductLink
+            }).ToList()
+        };
+
+        return Ok(ApiResponse<OrderDetailDto>.Ok(dto));
+    }
+
+    private string BuildOrderWhatsAppMessage(Order order)
+    {
+        var sb = new StringBuilder();
+
+        sb.AppendLine("Yeni sifariş var");
+        sb.AppendLine($"Sifariş nömrəsi: {order.OrderNumber}");
+        sb.AppendLine($"Müştəri: {order.CustomerFullName}");
+        sb.AppendLine($"Telefon: {order.CustomerPhoneNumber}");
+        sb.AppendLine();
+
+        sb.AppendLine("Məhsullar:");
+
+        foreach (var item in order.Items)
+        {
+            sb.AppendLine($"- {item.ProductName}");
+            sb.AppendLine($"  Kod: {item.ProductCode}");
+            sb.AppendLine($"  Razmer: {item.SizeValue}");
+            sb.AppendLine($"  Rəng: {item.ColorName}");
+            sb.AppendLine($"  Say: {item.Quantity}");
+            sb.AppendLine($"  Qiymət: {item.UnitPrice} AZN");
+            sb.AppendLine($"  Link: {item.ProductLink}");
+            sb.AppendLine();
+        }
+
+        sb.AppendLine($"Məhsulların cəmi: {order.TotalProductPrice} AZN");
+        sb.AppendLine($"Çatdırılma: {order.DeliveryPrice} AZN");
+        sb.AppendLine($"Yekun: {order.TotalPrice} AZN");
+        sb.AppendLine();
+
+        sb.AppendLine($"Çatdırılma tipi: {order.DeliveryType}");
+        sb.AppendLine($"Ödəniş: {order.PaymentMethod}");
+
+        if (order.DeliveryType == DeliveryType.HomeDelivery)
+        {
+            sb.AppendLine($"Ünvan: {order.AddressText}");
+            sb.AppendLine($"Tarix: {order.DeliveryDate:dd.MM.yyyy}");
+            sb.AppendLine($"Saat: {order.DeliveryTimeRange}");
+
+            if (order.Latitude.HasValue && order.Longitude.HasValue)
+            {
+                sb.AppendLine($"Konum: https://www.google.com/maps?q={order.Latitude},{order.Longitude}");
+            }
+        }
+
+        if (!string.IsNullOrWhiteSpace(order.Note))
+        {
+            sb.AppendLine();
+            sb.AppendLine($"Qeyd: {order.Note}");
+        }
+
+        return sb.ToString();
+    }
+}
