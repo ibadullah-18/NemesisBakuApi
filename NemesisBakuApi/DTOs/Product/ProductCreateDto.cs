@@ -1,4 +1,4 @@
-﻿nnamespace NemesisBakuApi.DTOs.Product;
+﻿using NemesisBakuApi.DTOs.Product;
 
 public class ProductCreateDto
 {

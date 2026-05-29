@@ -39,6 +39,7 @@ public class AppDbContext : IdentityDbContext<AppUser, IdentityRole<Guid>, Guid>
     public DbSet<UserActivityLog> UserActivityLogs { get; set; }
     public DbSet<SiteVisit> SiteVisits { get; set; }
     public DbSet<StoreInfo> StoreInfos { get; set; }
+    public DbSet<RefreshToken> RefreshTokens { get; set; }
 
     protected override void OnModelCreating(ModelBuilder builder)
     {
@@ -174,6 +175,13 @@ public class AppDbContext : IdentityDbContext<AppUser, IdentityRole<Guid>, Guid>
             .HasQueryFilter(x => !x.IsDeleted);
 
         builder.Entity<StoreInfo>()
+            .HasQueryFilter(x => !x.IsDeleted);
+
+        builder.Entity<RefreshToken>()
+            .HasIndex(x => x.Token)
+            .IsUnique();
+
+        builder.Entity<RefreshToken>()
             .HasQueryFilter(x => !x.IsDeleted);
     }
 }

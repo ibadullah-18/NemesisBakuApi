@@ -82,6 +82,10 @@ public class AuthController : ControllerBase
         {
             return Unauthorized(ApiResponse<string>.Fail("Nömrə və ya şifrə yanlışdır"));
         }
+        if (!user.IsActive || user.IsDeleted)
+        {
+            return Unauthorized(ApiResponse<string>.Fail("Hesab aktiv deyil"));
+        }
 
         var result = await _signInManager.CheckPasswordSignInAsync(
             user,
@@ -97,13 +101,24 @@ public class AuthController : ControllerBase
 
         await _userManager.UpdateAsync(user);
 
-        var token = await _jwtTokenGenerator.GenerateTokenAsync(user);
+        var accessToken = await _jwtTokenGenerator.GenerateTokenAsync(user);
+
+        var refreshToken = new RefreshToken
+        {
+            UserId = user.Id,
+            Token = RefreshTokenGenerator.Generate(),
+            ExpiresAt = DateTime.UtcNow.AddDays(30)
+        };
+
+        _context.RefreshTokens.Add(refreshToken);
+        await _context.SaveChangesAsync();
 
         var roles = await _userManager.GetRolesAsync(user);
 
         var response = new AuthResponseDto
         {
-            Token = token,
+            AccessToken = accessToken,
+            RefreshToken = refreshToken.Token,
             UserId = user.Id.ToString(),
             FullName = user.FullName,
             PhoneNumber = user.PhoneNumber ?? "",
@@ -285,6 +300,56 @@ public class AuthController : ControllerBase
         await _context.SaveChangesAsync();
 
         return Ok(ApiResponse<string>.Ok("Şifrə uğurla yeniləndi"));
+    }
+
+    [HttpPost("refresh-token")]
+    public async Task<IActionResult> RefreshToken(RefreshTokenDto dto)
+    {
+        var refreshToken = await _context.RefreshTokens
+            .Include(x => x.User)
+            .FirstOrDefaultAsync(x =>
+                x.Token == dto.RefreshToken &&
+                !x.IsRevoked &&
+                !x.IsUsed &&
+                x.ExpiresAt > DateTime.UtcNow);
+
+        if (refreshToken == null)
+        {
+            return Unauthorized(ApiResponse<string>.Fail("Refresh token yanlışdır və ya vaxtı bitib"));
+        }
+
+        refreshToken.IsUsed = true;
+        refreshToken.UsedAt = DateTime.UtcNow;
+
+        var user = refreshToken.User;
+
+        var newAccessToken = await _jwtTokenGenerator.GenerateTokenAsync(user);
+
+        var newRefreshToken = new RefreshToken
+        {
+            UserId = user.Id,
+            Token = RefreshTokenGenerator.Generate(),
+            ExpiresAt = DateTime.UtcNow.AddDays(30)
+        };
+
+        _context.RefreshTokens.Add(newRefreshToken);
+
+        await _context.SaveChangesAsync();
+
+        var roles = await _userManager.GetRolesAsync(user);
+
+        var response = new AuthResponseDto
+        {
+            AccessToken = newAccessToken,
+            RefreshToken = newRefreshToken.Token,
+            UserId = user.Id.ToString(),
+            FullName = user.FullName,
+            PhoneNumber = user.PhoneNumber ?? "",
+            Email = user.Email,
+            Roles = roles
+        };
+
+        return Ok(ApiResponse<AuthResponseDto>.Ok(response));
     }
 
 

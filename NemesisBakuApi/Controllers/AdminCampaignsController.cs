@@ -1,0 +1,107 @@
+﻿using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.Mvc;
+using Microsoft.EntityFrameworkCore;
+using NemesisBakuApi.Data;
+using NemesisBakuApi.DTOs.Campaign;
+using NemesisBakuApi.Entities;
+using NemesisBakuApi.Helpers;
+
+namespace NemesisBakuApi.Controllers;
+
+[ApiController]
+[Route("api/[controller]")]
+[Authorize(Roles = "SuperAdmin")]
+public class AdminCampaignsController : ControllerBase
+{
+    private readonly AppDbContext _context;
+
+    public AdminCampaignsController(AppDbContext context)
+    {
+        _context = context;
+    }
+
+    [HttpPost]
+    public async Task<IActionResult> Create(CampaignCreateDto dto)
+    {
+        if (dto.EndDate.HasValue && dto.EndDate.Value < dto.StartDate)
+            return BadRequest(ApiResponse<string>.Fail("Bitmə tarixi başlama tarixindən əvvəl ola bilməz"));
+
+        var campaign = new Campaign
+        {
+            Title = dto.Title,
+            Description = dto.Description,
+            ImageUrl = dto.ImageUrl,
+            RedirectUrl = dto.RedirectUrl,
+            StartDate = dto.StartDate,
+            EndDate = dto.EndDate,
+            IsActive = dto.IsActive
+        };
+
+        _context.Campaigns.Add(campaign);
+        await _context.SaveChangesAsync();
+
+        return Ok(ApiResponse<Guid>.Ok(campaign.Id, "Kampaniya yaradıldı"));
+    }
+
+    [HttpGet]
+    public async Task<IActionResult> GetAll()
+    {
+        var campaigns = await _context.Campaigns
+            .OrderByDescending(x => x.CreatedAt)
+            .Select(x => new CampaignDto
+            {
+                Id = x.Id,
+                Title = x.Title,
+                Description = x.Description,
+                ImageUrl = x.ImageUrl,
+                RedirectUrl = x.RedirectUrl,
+                StartDate = x.StartDate,
+                EndDate = x.EndDate,
+                IsActive = x.IsActive
+            })
+            .ToListAsync();
+
+        return Ok(ApiResponse<List<CampaignDto>>.Ok(campaigns));
+    }
+
+    [HttpPut("{id}")]
+    public async Task<IActionResult> Update(Guid id, CampaignCreateDto dto)
+    {
+        var campaign = await _context.Campaigns.FirstOrDefaultAsync(x => x.Id == id);
+
+        if (campaign == null)
+            return NotFound(ApiResponse<string>.Fail("Kampaniya tapılmadı"));
+
+        if (dto.EndDate.HasValue && dto.EndDate.Value < dto.StartDate)
+            return BadRequest(ApiResponse<string>.Fail("Bitmə tarixi başlama tarixindən əvvəl ola bilməz"));
+
+        campaign.Title = dto.Title;
+        campaign.Description = dto.Description;
+        campaign.ImageUrl = dto.ImageUrl;
+        campaign.RedirectUrl = dto.RedirectUrl;
+        campaign.StartDate = dto.StartDate;
+        campaign.EndDate = dto.EndDate;
+        campaign.IsActive = dto.IsActive;
+        campaign.UpdatedAt = DateTime.UtcNow;
+
+        await _context.SaveChangesAsync();
+
+        return Ok(ApiResponse<string>.Ok("Kampaniya yeniləndi"));
+    }
+
+    [HttpDelete("{id}")]
+    public async Task<IActionResult> Delete(Guid id)
+    {
+        var campaign = await _context.Campaigns.FirstOrDefaultAsync(x => x.Id == id);
+
+        if (campaign == null)
+            return NotFound(ApiResponse<string>.Fail("Kampaniya tapılmadı"));
+
+        campaign.IsDeleted = true;
+        campaign.UpdatedAt = DateTime.UtcNow;
+
+        await _context.SaveChangesAsync();
+
+        return Ok(ApiResponse<string>.Ok("Kampaniya silindi"));
+    }
+}

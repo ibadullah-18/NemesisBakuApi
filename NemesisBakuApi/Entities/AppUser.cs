@@ -18,6 +18,7 @@ public class AppUser : IdentityUser<Guid>
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
     public DateTime? UpdatedAt { get; set; }
 
+    public ICollection<RefreshToken> RefreshTokens { get; set; } = new List<RefreshToken>();
     public ICollection<BasketItem> BasketItems { get; set; } = new List<BasketItem>();
     public ICollection<Favorite> Favorites { get; set; } = new List<Favorite>();
     public ICollection<Order> Orders { get; set; } = new List<Order>();

@@ -169,9 +169,51 @@ public class OrdersController : ControllerBase
             basketItem.UpdatedAt = DateTime.UtcNow;
         }
 
+        decimal promoDiscountAmount = 0;
+
+        if (!string.IsNullOrWhiteSpace(dto.PromoCode))
+        {
+            var now = DateTime.UtcNow;
+            var code = dto.PromoCode.Trim().ToUpper();
+
+            var promo = await _context.PromoCodes
+                .FirstOrDefaultAsync(x =>
+                    x.Code == code &&
+                    x.IsActive &&
+                    x.StartDate <= now &&
+                    (!x.EndDate.HasValue || x.EndDate.Value >= now));
+
+            if (promo == null)
+                return BadRequest(ApiResponse<string>.Fail("Promo kod yanlışdır və ya aktiv deyil"));
+
+            if (promo.UsageLimit.HasValue && promo.UsedCount >= promo.UsageLimit.Value)
+                return BadRequest(ApiResponse<string>.Fail("Promo kod istifadə limitinə çatıb"));
+
+            if (promo.MinOrderAmount.HasValue && totalProductPrice < promo.MinOrderAmount.Value)
+                return BadRequest(ApiResponse<string>.Fail(
+                    $"Bu promo kod üçün minimum sifariş məbləği {promo.MinOrderAmount.Value} AZN olmalıdır"));
+
+            promoDiscountAmount = promo.DiscountType == DiscountType.Percentage
+                ? totalProductPrice * promo.DiscountValue / 100
+                : promo.DiscountValue;
+
+            if (promoDiscountAmount > totalProductPrice)
+                promoDiscountAmount = totalProductPrice;
+
+            promo.UsedCount++;
+
+            _context.PromoCodeUsages.Add(new PromoCodeUsage
+            {
+                PromoCodeId = promo.Id,
+                UserId = userId,
+                Order = order,
+                DiscountAmount = promoDiscountAmount
+            });
+        }
+
         order.TotalProductPrice = totalProductPrice;
-        order.PromoDiscountAmount = 0;
-        order.TotalPrice = totalProductPrice + order.DeliveryPrice;
+        order.PromoDiscountAmount = promoDiscountAmount;
+        order.TotalPrice = totalProductPrice - promoDiscountAmount + order.DeliveryPrice;
 
         _context.Orders.Add(order);
 
