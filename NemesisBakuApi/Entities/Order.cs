@@ -19,6 +19,12 @@ public class Order : BaseEntity
     public decimal? Latitude { get; set; }
     public decimal? Longitude { get; set; }
 
+    public string? BuildingNumber { get; set; }
+    public string? Floor { get; set; }
+    public string? Apartment { get; set; }
+
+    public decimal? DeliveryDistanceKm { get; set; }
+
     public DateTime? DeliveryDate { get; set; }
     public string? DeliveryTimeRange { get; set; }
 

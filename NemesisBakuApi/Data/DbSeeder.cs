@@ -1,4 +1,5 @@
 ﻿using Microsoft.AspNetCore.Identity;
+using NemesisBakuApi.Entities;
 
 namespace NemesisBakuApi.Data;
 
@@ -8,6 +9,9 @@ public static class DbSeeder
     {
         var roleManager =
             serviceProvider.GetRequiredService<RoleManager<IdentityRole<Guid>>>();
+
+        var userManager =
+            serviceProvider.GetRequiredService<UserManager<AppUser>>();
 
         string[] roles =
         {
@@ -20,8 +24,52 @@ public static class DbSeeder
         {
             if (!await roleManager.RoleExistsAsync(role))
             {
-                await roleManager.CreateAsync(
-                    new IdentityRole<Guid>(role));
+                await roleManager.CreateAsync(new IdentityRole<Guid>(role));
+            }
+        }
+
+        var superAdminPhone = "994506151345";
+        var superAdminEmail = "superadmin@nemesisbaku.az";
+        var superAdminPassword = "Ibo!2007";
+
+        var superAdmin = await userManager.FindByNameAsync(superAdminPhone);
+
+        if (superAdmin == null)
+        {
+            superAdmin = new AppUser
+            {
+                FullName = "NemesisBaku Super Admin",
+                UserName = superAdminPhone,
+                PhoneNumber = superAdminPhone,
+                Email = superAdminEmail,
+                IsActive = true,
+                IsDeleted = false,
+                CreatedAt = DateTime.UtcNow
+            };
+
+            var result = await userManager.CreateAsync(superAdmin, superAdminPassword);
+
+            if (!result.Succeeded)
+            {
+                foreach (var error in result.Errors)
+                {
+                    Console.WriteLine("SUPER ADMIN ERROR: " + error.Description);
+                }
+
+                return;
+            }
+
+            await userManager.AddToRoleAsync(superAdmin, "SuperAdmin");
+
+            Console.WriteLine("SUPER ADMIN CREATED SUCCESSFULLY");
+        }
+        else
+        {
+            var rolesOfUser = await userManager.GetRolesAsync(superAdmin);
+
+            if (!rolesOfUser.Contains("SuperAdmin"))
+            {
+                await userManager.AddToRoleAsync(superAdmin, "SuperAdmin");
             }
         }
     }

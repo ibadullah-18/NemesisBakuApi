@@ -1,14 +1,16 @@
-﻿using System.Security.Claims;
-using System.Text;
-using Microsoft.AspNetCore.Authorization;
+﻿using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Options;
 using NemesisBakuApi.Data;
 using NemesisBakuApi.DTOs.Order;
 using NemesisBakuApi.Entities;
 using NemesisBakuApi.Enums;
 using NemesisBakuApi.Helpers;
 using NemesisBakuApi.Services.Interfaces;
+using NemesisBakuApi.Settings;
+using System.Security.Claims;
+using System.Text;
 
 namespace NemesisBakuApi.Controllers;
 
@@ -19,16 +21,16 @@ public class OrdersController : ControllerBase
 {
     private readonly AppDbContext _context;
     private readonly IWhatsAppService _whatsAppService;
-    private readonly IConfiguration _configuration;
+    private readonly DeliverySettings _deliverySettings;
 
     public OrdersController(
         AppDbContext context,
         IWhatsAppService whatsAppService,
-        IConfiguration configuration)
+        IOptions<DeliverySettings> deliveryOptions)
     {
         _context = context;
         _whatsAppService = whatsAppService;
-        _configuration = configuration;
+        _deliverySettings = deliveryOptions.Value;
     }
 
     private Guid GetUserId()
@@ -49,24 +51,45 @@ public class OrdersController : ControllerBase
         if (dto.Items == null || !dto.Items.Any())
             return BadRequest(ApiResponse<string>.Fail("Sifariş üçün məhsul seçilməyib"));
 
+        decimal deliveryPrice = 0;
+        decimal? deliveryDistanceKm = null;
+
         if (dto.DeliveryType == DeliveryType.HomeDelivery)
         {
             if (string.IsNullOrWhiteSpace(dto.AddressText))
                 return BadRequest(ApiResponse<string>.Fail("Ünvana çatdırılma üçün ünvan məcburidir"));
+
+            if (!dto.Latitude.HasValue || !dto.Longitude.HasValue)
+                return BadRequest(ApiResponse<string>.Fail("Çatdırılma üçün xəritədən konum seçilməlidir"));
 
             if (!dto.DeliveryDate.HasValue)
                 return BadRequest(ApiResponse<string>.Fail("Çatdırılma tarixi seçilməlidir"));
 
             if (string.IsNullOrWhiteSpace(dto.DeliveryTimeRange))
                 return BadRequest(ApiResponse<string>.Fail("Çatdırılma saat aralığı seçilməlidir"));
+
+            deliveryDistanceKm = DeliveryPriceCalculator.CalculateDistanceKm(
+                _deliverySettings.StoreLatitude,
+                _deliverySettings.StoreLongitude,
+                dto.Latitude.Value,
+                dto.Longitude.Value);
+
+            deliveryPrice = DeliveryPriceCalculator.CalculateDeliveryPrice(
+                deliveryDistanceKm.Value,
+                _deliverySettings);
         }
 
         if (dto.DeliveryType == DeliveryType.PickupFromStore)
         {
-            dto.DeliveryPrice = 0;
+            deliveryPrice = 0;
+            deliveryDistanceKm = null;
+
             dto.AddressText = null;
             dto.Latitude = null;
             dto.Longitude = null;
+            dto.BuildingNumber = null;
+            dto.Floor = null;
+            dto.Apartment = null;
         }
 
         await using var transaction = await _context.Database.BeginTransactionAsync();
@@ -117,10 +140,16 @@ public class OrdersController : ControllerBase
             Latitude = dto.Latitude,
             Longitude = dto.Longitude,
 
+            BuildingNumber = dto.BuildingNumber,
+            Floor = dto.Floor,
+            Apartment = dto.Apartment,
+
             DeliveryDate = dto.DeliveryDate,
             DeliveryTimeRange = dto.DeliveryTimeRange,
 
-            DeliveryPrice = dto.DeliveryPrice,
+            DeliveryPrice = deliveryPrice,
+            DeliveryDistanceKm = deliveryDistanceKm,
+
             Note = dto.Note,
 
             Status = OrderStatus.Pending
@@ -282,10 +311,16 @@ public class OrdersController : ControllerBase
             Latitude = order.Latitude,
             Longitude = order.Longitude,
 
+            BuildingNumber = order.BuildingNumber,
+            Floor = order.Floor,
+            Apartment = order.Apartment,
+
             DeliveryDate = order.DeliveryDate,
             DeliveryTimeRange = order.DeliveryTimeRange,
 
             DeliveryPrice = order.DeliveryPrice,
+            DeliveryDistanceKm = order.DeliveryDistanceKm,
+
             Note = order.Note,
 
             TotalProductPrice = order.TotalProductPrice,
@@ -347,6 +382,12 @@ public class OrdersController : ControllerBase
         }
 
         sb.AppendLine($"Məhsulların cəmi: {order.TotalProductPrice} AZN");
+
+        if (order.PromoDiscountAmount > 0)
+        {
+            sb.AppendLine($"Promo endirim: -{order.PromoDiscountAmount} AZN");
+        }
+
         sb.AppendLine($"Çatdırılma: {order.DeliveryPrice} AZN");
         sb.AppendLine($"Yekun: {order.TotalPrice} AZN");
         sb.AppendLine();
@@ -357,6 +398,10 @@ public class OrdersController : ControllerBase
         if (order.DeliveryType == DeliveryType.HomeDelivery)
         {
             sb.AppendLine($"Ünvan: {order.AddressText}");
+            sb.AppendLine($"Məsafə: {order.DeliveryDistanceKm} km");
+            sb.AppendLine($"Bina/Blok: {order.BuildingNumber}");
+            sb.AppendLine($"Mərtəbə: {order.Floor}");
+            sb.AppendLine($"Mənzil: {order.Apartment}");
             sb.AppendLine($"Tarix: {order.DeliveryDate:dd.MM.yyyy}");
             sb.AppendLine($"Saat: {order.DeliveryTimeRange}");
 
@@ -364,6 +409,10 @@ public class OrdersController : ControllerBase
             {
                 sb.AppendLine($"Konum: https://www.google.com/maps?q={order.Latitude},{order.Longitude}");
             }
+        }
+        else
+        {
+            sb.AppendLine("Təhvil alma: Mağazadan götürüləcək");
         }
 
         if (!string.IsNullOrWhiteSpace(order.Note))

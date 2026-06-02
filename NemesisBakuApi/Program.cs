@@ -3,11 +3,14 @@ using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.IdentityModel.Tokens;
+using FluentValidation;
+using NemesisBakuApi.Validations;
 using Microsoft.OpenApi;
 using Microsoft.OpenApi.Models;
 using NemesisBakuApi.Data;
 using NemesisBakuApi.Entities;
 using NemesisBakuApi.Helpers;
+using NemesisBakuApi.Middlewares;
 using NemesisBakuApi.Services.Implementations;
 using NemesisBakuApi.Services.Interfaces;
 using NemesisBakuApi.Settings;
@@ -19,6 +22,12 @@ builder.Services.AddControllers();
 
 builder.Services.Configure<WhatsAppSettings>(
     builder.Configuration.GetSection("WhatsApp"));
+
+builder.Services.Configure<CloudinarySettings>(
+    builder.Configuration.GetSection("Cloudinary"));
+
+builder.Services.Configure<DeliverySettings>(
+    builder.Configuration.GetSection("Delivery"));
 
 builder.Services.AddHttpClient();
 
@@ -81,6 +90,9 @@ builder.Services
 #region service
 builder.Services.AddScoped<JwtTokenGenerator>();
 builder.Services.AddScoped<IWhatsAppService, WhatsAppService>();
+builder.Services.AddScoped<IFileService, CloudinaryFileService>();
+builder.Services.AddValidatorsFromAssemblyContaining<ProductCreateDtoValidator>();
+builder.Services.AddScoped<IAuditLogService, AuditLogService>();
 #endregion
 
 
@@ -130,6 +142,8 @@ builder.Services.AddCors(options =>
 });
 
 var app = builder.Build();
+
+app.UseMiddleware<ExceptionMiddleware>();
 
 app.UseSwagger();
 

@@ -2,8 +2,8 @@
 using System.Text;
 using System.Text.Json;
 using Microsoft.Extensions.Options;
-using NemesisBakuApi.Settings;
 using NemesisBakuApi.Services.Interfaces;
+using NemesisBakuApi.Settings;
 
 namespace NemesisBakuApi.Services.Implementations;
 
@@ -32,7 +32,7 @@ public class WhatsAppService : IWhatsAppService
         return await SendTextMessageAsync(_settings.SellerPhoneNumber, message);
     }
 
-    private async Task<bool> SendTextMessageAsync(string toPhoneNumber, string message)
+    public async Task<bool> SendTextMessageAsync(string toPhoneNumber, string message)
     {
         var url =
             $"https://graph.facebook.com/{_settings.ApiVersion}/{_settings.PhoneNumberId}/messages";
@@ -51,6 +51,7 @@ public class WhatsAppService : IWhatsAppService
         var json = JsonSerializer.Serialize(payload);
 
         var request = new HttpRequestMessage(HttpMethod.Post, url);
+
         request.Headers.Authorization =
             new AuthenticationHeaderValue("Bearer", _settings.AccessToken);
 

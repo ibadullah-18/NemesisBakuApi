@@ -27,10 +27,8 @@
   </ItemGroup>
 
   <ItemGroup>
-    <Folder Include="Middlewares\" />
     <Folder Include="Mappings\" />
     <Folder Include="Repositories\" />
-    <Folder Include="Validations\" />
   </ItemGroup>
 
 </Project>

@@ -6,6 +6,8 @@ using NemesisBakuApi.Data;
 using NemesisBakuApi.DTOs.Admin;
 using NemesisBakuApi.Entities;
 using NemesisBakuApi.Helpers;
+using NemesisBakuApi.Services.Interfaces;
+using System.Security.Claims;
 
 namespace NemesisBakuApi.Controllers;
 
@@ -16,13 +18,16 @@ public class AdminUsersController : ControllerBase
 {
     private readonly AppDbContext _context;
     private readonly UserManager<AppUser> _userManager;
+    private readonly IAuditLogService _auditLogService;
 
     public AdminUsersController(
-        AppDbContext context,
-        UserManager<AppUser> userManager)
+    AppDbContext context,
+    UserManager<AppUser> userManager,
+    IAuditLogService auditLogService)
     {
         _context = context;
         _userManager = userManager;
+        _auditLogService = auditLogService;
     }
 
     [HttpGet]
@@ -173,6 +178,12 @@ public class AdminUsersController : ControllerBase
 
         await _userManager.AddToRoleAsync(admin, "Admin");
 
+        await WriteAuditLogAsync(
+            "CreateAdmin",
+            "User",
+            admin.Id.ToString(),
+            $"Admin yaradıldı: {admin.FullName}");
+
         return Ok(ApiResponse<Guid>.Ok(admin.Id, "Admin uğurla yaradıldı"));
     }
 
@@ -194,6 +205,12 @@ public class AdminUsersController : ControllerBase
 
         await _userManager.UpdateAsync(user);
 
+        await WriteAuditLogAsync(
+            "DeactivateUser",
+            "User",
+            user.Id.ToString(),
+            $"İstifadəçi deaktiv edildi: {user.FullName}");
+
         return Ok(ApiResponse<string>.Ok("İstifadəçi deaktiv edildi"));
     }
 
@@ -209,6 +226,12 @@ public class AdminUsersController : ControllerBase
         user.UpdatedAt = DateTime.UtcNow;
 
         await _userManager.UpdateAsync(user);
+
+        await WriteAuditLogAsync(
+            "ActivateUser", 
+            "User",
+            user.Id.ToString(),
+            $"İstifadəçi aktiv edildi: {user.FullName}");
 
         return Ok(ApiResponse<string>.Ok("İstifadəçi aktiv edildi"));
     }
@@ -232,6 +255,38 @@ public class AdminUsersController : ControllerBase
 
         await _userManager.UpdateAsync(user);
 
+        await WriteAuditLogAsync(
+            "DeleteUser",
+            "User",
+            user.Id.ToString(),
+            $"İstifadəçi silindi: {user.FullName}");
+
         return Ok(ApiResponse<string>.Ok("İstifadəçi silindi"));
+    }
+
+    private Guid? GetUserIdOrNull()
+    {
+        var userId = User.FindFirstValue(ClaimTypes.NameIdentifier);
+
+        if (string.IsNullOrWhiteSpace(userId))
+            return null;
+
+        return Guid.Parse(userId);
+    }
+
+    private async Task WriteAuditLogAsync(
+        string action,
+        string entityName,
+        string? entityId,
+        string? description)
+    {
+        await _auditLogService.CreateAsync(
+            GetUserIdOrNull(),
+            action,
+            entityName,
+            entityId,
+            description,
+            HttpContext.Connection.RemoteIpAddress?.ToString(),
+            Request.Headers.UserAgent.ToString());
     }
 }

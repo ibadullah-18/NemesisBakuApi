@@ -1,5 +1,4 @@
-﻿using System.Security.Claims;
-using Microsoft.AspNetCore.Authorization;
+﻿using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using NemesisBakuApi.Data;
@@ -7,6 +6,8 @@ using NemesisBakuApi.DTOs.Order;
 using NemesisBakuApi.Entities;
 using NemesisBakuApi.Enums;
 using NemesisBakuApi.Helpers;
+using NemesisBakuApi.Services.Interfaces;
+using System.Security.Claims;
 
 namespace NemesisBakuApi.Controllers;
 
@@ -14,12 +15,20 @@ namespace NemesisBakuApi.Controllers;
 [Route("api/[controller]")]
 [Authorize(Roles = "SuperAdmin,Admin")]
 public class AdminOrdersController : ControllerBase
+
 {
     private readonly AppDbContext _context;
+    private readonly IAuditLogService _auditLogService;
+    private readonly IWhatsAppService _whatsAppService;
 
-    public AdminOrdersController(AppDbContext context)
+    public AdminOrdersController(
+        AppDbContext context,
+        IAuditLogService auditLogService,
+        IWhatsAppService whatsAppService)
     {
         _context = context;
+        _auditLogService = auditLogService;
+        _whatsAppService = whatsAppService;
     }
 
     private Guid GetUserId()
@@ -176,6 +185,7 @@ public class AdminOrdersController : ControllerBase
         var adminId = GetUserId();
 
         var order = await _context.Orders
+            .Include(x => x.Items)
             .FirstOrDefaultAsync(x => x.Id == id);
 
         if (order == null)
@@ -200,6 +210,106 @@ public class AdminOrdersController : ControllerBase
 
         await _context.SaveChangesAsync();
 
+        await WriteAuditLogAsync(
+            "UpdateStatus",
+            "Order",
+            order.Id.ToString(),
+            $"Sifariş statusu dəyişdirildi: {oldStatus} → {dto.NewStatus}. OrderNumber: {order.OrderNumber}");
+
+        await SendOrderStatusWhatsAppMessageAsync(order, dto.NewStatus);
+
+
         return Ok(ApiResponse<string>.Ok("Sifariş statusu yeniləndi"));
+    }
+
+    private async Task WriteAuditLogAsync(
+    string action,
+    string entityName,
+    string? entityId,
+    string? description)
+    {
+        await _auditLogService.CreateAsync(
+            GetUserId(),
+            action,
+            entityName,
+            entityId,
+            description,
+            HttpContext.Connection.RemoteIpAddress?.ToString(),
+            Request.Headers.UserAgent.ToString());
+    }
+
+    private async Task SendOrderStatusWhatsAppMessageAsync(Order order, OrderStatus newStatus)
+    {
+        if (string.IsNullOrWhiteSpace(order.CustomerPhoneNumber))
+            return;
+
+        string? message = null;
+
+        if (newStatus == OrderStatus.Confirmed)
+        {
+            message =
+$@"Salam {order.CustomerFullName}
+
+Sifarişiniz qəbul olundu və hazırlanır.
+
+Sifariş nömrəsi:
+{order.OrderNumber}
+
+Yekun məbləğ:
+{order.TotalPrice} AZN
+
+NemesisBaku";
+        }
+
+        if (newStatus == OrderStatus.OnDelivery)
+        {
+            var estimatedMinutes = Math.Max(
+                20,
+                (int)Math.Round(((order.DeliveryDistanceKm ?? 0) / 20m) * 60m));
+
+            var productsText = string.Join(", ", order.Items.Select(x => x.ProductName));
+
+            message =
+    $@"Salam {order.CustomerFullName}
+
+Sifarişiniz dağıtıma çıxıb.
+
+Sifariş nömrəsi:
+{order.OrderNumber}
+
+Məhsullar:
+{productsText}
+
+Yekun məbləğ:
+{order.TotalPrice} AZN
+
+Çatdırılma:
+{order.DeliveryPrice} AZN
+
+Məsafə:
+{order.DeliveryDistanceKm} km
+
+Təxmini çatdırılma:
+{estimatedMinutes} dəqiqə
+
+NemesisBaku";
+        }
+
+        if (newStatus == OrderStatus.Delivered)
+        {
+            message =
+    $@"Salam {order.CustomerFullName}
+
+Sifarişiniz uğurla təhvil verildi.
+
+NemesisBaku seçdiyiniz üçün təşəkkür edirik.";
+        }
+
+        if (!string.IsNullOrWhiteSpace(message))
+        {
+            await _whatsAppService.SendTextMessageAsync(
+                order.CustomerPhoneNumber,
+                message);
+        }
     }
 }

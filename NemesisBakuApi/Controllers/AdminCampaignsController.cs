@@ -5,6 +5,8 @@ using NemesisBakuApi.Data;
 using NemesisBakuApi.DTOs.Campaign;
 using NemesisBakuApi.Entities;
 using NemesisBakuApi.Helpers;
+using NemesisBakuApi.Services.Interfaces;
+using System.Security.Claims;
 
 namespace NemesisBakuApi.Controllers;
 
@@ -14,10 +16,14 @@ namespace NemesisBakuApi.Controllers;
 public class AdminCampaignsController : ControllerBase
 {
     private readonly AppDbContext _context;
+    private readonly IAuditLogService _auditLogService;
 
-    public AdminCampaignsController(AppDbContext context)
+    public AdminCampaignsController(
+        AppDbContext context,
+        IAuditLogService auditLogService)
     {
         _context = context;
+        _auditLogService = auditLogService;
     }
 
     [HttpPost]
@@ -39,6 +45,12 @@ public class AdminCampaignsController : ControllerBase
 
         _context.Campaigns.Add(campaign);
         await _context.SaveChangesAsync();
+
+        await WriteAuditLogAsync(
+            "Create",
+            "Campaign",
+            campaign.Id.ToString(),
+            $"Kampaniya yaradıldı: {campaign.Title}");
 
         return Ok(ApiResponse<Guid>.Ok(campaign.Id, "Kampaniya yaradıldı"));
     }
@@ -86,6 +98,12 @@ public class AdminCampaignsController : ControllerBase
 
         await _context.SaveChangesAsync();
 
+        await WriteAuditLogAsync(
+            "Update",
+            "Campaign",
+            campaign.Id.ToString(),
+            $"Kampaniya yeniləndi: {campaign.Title}");
+
         return Ok(ApiResponse<string>.Ok("Kampaniya yeniləndi"));
     }
 
@@ -102,6 +120,38 @@ public class AdminCampaignsController : ControllerBase
 
         await _context.SaveChangesAsync();
 
+        await WriteAuditLogAsync(
+            "Delete",
+            "Campaign",
+            campaign.Id.ToString(),
+            $"Kampaniya silindi: {campaign.Title}");
+
         return Ok(ApiResponse<string>.Ok("Kampaniya silindi"));
+    }
+
+    private Guid? GetUserIdOrNull()
+    {
+        var userId = User.FindFirstValue(ClaimTypes.NameIdentifier);
+
+        if (string.IsNullOrWhiteSpace(userId))
+            return null;
+
+        return Guid.Parse(userId);
+    }
+
+    private async Task WriteAuditLogAsync(
+        string action,
+        string entityName,
+        string? entityId,
+        string? description)
+    {
+        await _auditLogService.CreateAsync(
+            GetUserIdOrNull(),
+            action,
+            entityName,
+            entityId,
+            description,
+            HttpContext.Connection.RemoteIpAddress?.ToString(),
+            Request.Headers.UserAgent.ToString());
     }
 }

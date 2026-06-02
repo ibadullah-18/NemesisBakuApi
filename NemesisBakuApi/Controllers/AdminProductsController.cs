@@ -5,6 +5,8 @@ using NemesisBakuApi.Data;
 using NemesisBakuApi.DTOs.Product;
 using NemesisBakuApi.Entities;
 using NemesisBakuApi.Helpers;
+using NemesisBakuApi.Services.Interfaces;
+using System.Security.Claims;
 
 namespace NemesisBakuApi.Controllers;
 
@@ -14,10 +16,17 @@ namespace NemesisBakuApi.Controllers;
 public class AdminProductsController : ControllerBase
 {
     private readonly AppDbContext _context;
+    private readonly IFileService _fileService;
+    private readonly IAuditLogService _auditLogService;
 
-    public AdminProductsController(AppDbContext context)
+    public AdminProductsController(
+     AppDbContext context,
+     IFileService fileService,
+     IAuditLogService auditLogService)
     {
         _context = context;
+        _fileService = fileService;
+        _auditLogService = auditLogService;
     }
 
     [HttpPost]
@@ -74,6 +83,12 @@ public class AdminProductsController : ControllerBase
 
         _context.Products.Add(product);
         await _context.SaveChangesAsync();
+
+        await WriteAuditLogAsync(
+            "Create",
+            "Product",
+            product.Id.ToString(),
+            $"Məhsul yaradıldı: {product.Name}");
 
         return Ok(ApiResponse<Guid>.Ok(product.Id, "Məhsul uğurla əlavə olundu"));
     }
@@ -195,6 +210,12 @@ public class AdminProductsController : ControllerBase
 
         await _context.SaveChangesAsync();
 
+        await WriteAuditLogAsync(
+            "Update",
+            "Product",
+            product.Id.ToString(),
+            $"Məhsul yeniləndi: {product.Name}");
+
         return Ok(ApiResponse<string>.Ok("Məhsul uğurla yeniləndi"));
     }
 
@@ -211,6 +232,292 @@ public class AdminProductsController : ControllerBase
 
         await _context.SaveChangesAsync();
 
+        await WriteAuditLogAsync(
+            "Delete",
+            "Product",
+            product.Id.ToString(),
+            $"Məhsul silindi: {product.Name}");
+
         return Ok(ApiResponse<string>.Ok("Məhsul uğurla silindi"));
+    }
+
+    [HttpPost("{productId}/images")]
+    public async Task<IActionResult> AddImage(Guid productId, IFormFile file, [FromQuery] bool isMain = false)
+    {
+        var product = await _context.Products
+            .Include(x => x.Images)
+            .FirstOrDefaultAsync(x => x.Id == productId);
+
+        if (product == null)
+            return NotFound(ApiResponse<string>.Fail("Məhsul tapılmadı"));
+
+        var imageUrl = await _fileService.UploadImageAsync(file, "products");
+
+        if (isMain || !product.Images.Any())
+        {
+            foreach (var img in product.Images)
+            {
+                img.IsMain = false;
+            }
+        }
+
+        var image = new ProductImage
+        {
+            ProductId = productId,
+            ImageUrl = imageUrl,
+            IsMain = isMain || !product.Images.Any(),
+            Order = product.Images.Count + 1
+        };
+
+        _context.ProductImages.Add(image);
+        await _context.SaveChangesAsync();
+
+        await WriteAuditLogAsync(
+            "AddImage",
+            "ProductImage",
+            image.Id.ToString(),
+            $"Məhsula şəkil əlavə olundu. ProductId: {productId}");
+
+        return Ok(ApiResponse<string>.Ok(imageUrl, "Şəkil məhsula əlavə olundu"));
+    }
+
+    [HttpDelete("images/{imageId}")]
+    public async Task<IActionResult> DeleteImage(Guid imageId)
+    {
+        var image = await _context.ProductImages
+            .FirstOrDefaultAsync(x => x.Id == imageId);
+
+        if (image == null)
+            return NotFound(ApiResponse<string>.Fail("Şəkil tapılmadı"));
+
+        await _fileService.DeleteImageAsync(image.ImageUrl);
+
+        image.IsDeleted = true;
+        image.UpdatedAt = DateTime.UtcNow;
+
+        await _context.SaveChangesAsync();
+
+        await WriteAuditLogAsync(
+            "DeleteImage",
+            "ProductImage",
+            image.Id.ToString(),
+            $"Məhsul şəkli silindi. ProductId: {image.ProductId}");
+
+        return Ok(ApiResponse<string>.Ok("Şəkil silindi"));
+    }
+
+    [HttpPut("images/{imageId}/set-main")]
+    public async Task<IActionResult> SetMainImage(Guid imageId)
+    {
+        var image = await _context.ProductImages
+            .FirstOrDefaultAsync(x => x.Id == imageId);
+
+        if (image == null)
+            return NotFound(ApiResponse<string>.Fail("Şəkil tapılmadı"));
+
+        var productImages = await _context.ProductImages
+            .Where(x => x.ProductId == image.ProductId)
+            .ToListAsync();
+
+        foreach (var img in productImages)
+        {
+            img.IsMain = false;
+        }
+
+        image.IsMain = true;
+        image.UpdatedAt = DateTime.UtcNow;
+
+        await _context.SaveChangesAsync();
+
+        await WriteAuditLogAsync(
+            "SetMainImage",
+            "ProductImage",
+            image.Id.ToString(),
+            $"Əsas məhsul şəkli dəyişdirildi. ProductId: {image.ProductId}");
+
+        return Ok(ApiResponse<string>.Ok("Əsas şəkil dəyişdirildi"));
+    }
+
+    [HttpPut("images/{imageId}/order")]
+    public async Task<IActionResult> UpdateImageOrder(Guid imageId, ProductImageOrderDto dto)
+    {
+        var image = await _context.ProductImages
+            .FirstOrDefaultAsync(x => x.Id == imageId);
+
+        if (image == null)
+            return NotFound(ApiResponse<string>.Fail("Şəkil tapılmadı"));
+
+        if (dto.Order < 0)
+            return BadRequest(ApiResponse<string>.Fail("Sıra düzgün deyil"));
+
+        image.Order = dto.Order;
+        image.UpdatedAt = DateTime.UtcNow;
+
+        await _context.SaveChangesAsync();
+
+        return Ok(ApiResponse<string>.Ok("Şəkil sırası yeniləndi"));
+    }
+
+    [HttpPost("{productId}/variants")]
+    public async Task<IActionResult> AddVariant(Guid productId, ProductVariantCreateDto dto)
+    {
+        var productExists = await _context.Products.AnyAsync(x => x.Id == productId);
+
+        if (!productExists)
+            return NotFound(ApiResponse<string>.Fail("Məhsul tapılmadı"));
+
+        var sizeExists = await _context.Sizes.AnyAsync(x => x.Id == dto.SizeId);
+
+        if (!sizeExists)
+            return BadRequest(ApiResponse<string>.Fail("Razmer tapılmadı"));
+
+        var colorExists = await _context.Colors.AnyAsync(x => x.Id == dto.ColorId);
+
+        if (!colorExists)
+            return BadRequest(ApiResponse<string>.Fail("Rəng tapılmadı"));
+
+        if (dto.StockCount < 0)
+            return BadRequest(ApiResponse<string>.Fail("Stok sayı mənfi ola bilməz"));
+
+        var exists = await _context.ProductVariants
+            .IgnoreQueryFilters()
+            .FirstOrDefaultAsync(x =>
+                x.ProductId == productId &&
+                x.SizeId == dto.SizeId &&
+                x.ColorId == dto.ColorId);
+
+        if (exists != null && !exists.IsDeleted)
+            return BadRequest(ApiResponse<string>.Fail("Bu razmer və rəng artıq mövcuddur"));
+
+        if (exists != null && exists.IsDeleted)
+        {
+            exists.IsDeleted = false;
+            exists.IsActive = true;
+            exists.StockCount = dto.StockCount;
+            exists.UpdatedAt = DateTime.UtcNow;
+
+            await _context.SaveChangesAsync();
+
+            await WriteAuditLogAsync(
+                "AddVariant",
+                "ProductVariant",
+                exists.Id.ToString(),
+                $"Məhsula variant əlavə olundu. ProductId: {productId}");
+
+            return Ok(ApiResponse<Guid>.Ok(exists.Id, "Variant yenidən aktiv edildi"));
+        }
+
+        var variant = new ProductVariant
+        {
+            ProductId = productId,
+            SizeId = dto.SizeId,
+            ColorId = dto.ColorId,
+            StockCount = dto.StockCount,
+            IsActive = true
+        };
+
+        _context.ProductVariants.Add(variant);
+        await _context.SaveChangesAsync();
+
+        return Ok(ApiResponse<Guid>.Ok(variant.Id, "Variant əlavə olundu"));
+    }
+
+    [HttpPut("variants/{variantId}")]
+    public async Task<IActionResult> UpdateVariant(Guid variantId, ProductVariantUpdateDto dto)
+    {
+        var variant = await _context.ProductVariants
+            .FirstOrDefaultAsync(x => x.Id == variantId);
+
+        if (variant == null)
+            return NotFound(ApiResponse<string>.Fail("Variant tapılmadı"));
+
+        var sizeExists = await _context.Sizes.AnyAsync(x => x.Id == dto.SizeId);
+
+        if (!sizeExists)
+            return BadRequest(ApiResponse<string>.Fail("Razmer tapılmadı"));
+
+        var colorExists = await _context.Colors.AnyAsync(x => x.Id == dto.ColorId);
+
+        if (!colorExists)
+            return BadRequest(ApiResponse<string>.Fail("Rəng tapılmadı"));
+
+        if (dto.StockCount < 0)
+            return BadRequest(ApiResponse<string>.Fail("Stok sayı mənfi ola bilməz"));
+
+        var duplicateExists = await _context.ProductVariants
+            .AnyAsync(x =>
+                x.Id != variantId &&
+                x.ProductId == variant.ProductId &&
+                x.SizeId == dto.SizeId &&
+                x.ColorId == dto.ColorId);
+
+        if (duplicateExists)
+            return BadRequest(ApiResponse<string>.Fail("Bu razmer və rəng artıq mövcuddur"));
+
+        variant.SizeId = dto.SizeId;
+        variant.ColorId = dto.ColorId;
+        variant.StockCount = dto.StockCount;
+        variant.IsActive = dto.IsActive;
+        variant.UpdatedAt = DateTime.UtcNow;
+
+        await _context.SaveChangesAsync();
+
+        await WriteAuditLogAsync(
+            "UpdateVariant",
+            "ProductVariant",
+            variant.Id.ToString(),
+            $"Məhsul variantı yeniləndi. ProductId: {variant.ProductId}");
+
+        return Ok(ApiResponse<string>.Ok("Variant yeniləndi"));
+    }
+
+    [HttpDelete("variants/{variantId}")]
+    public async Task<IActionResult> DeleteVariant(Guid variantId)
+    {
+        var variant = await _context.ProductVariants
+            .FirstOrDefaultAsync(x => x.Id == variantId);
+
+        if (variant == null)
+            return NotFound(ApiResponse<string>.Fail("Variant tapılmadı"));
+
+        variant.IsDeleted = true;
+        variant.IsActive = false;
+        variant.UpdatedAt = DateTime.UtcNow;
+
+        await _context.SaveChangesAsync();
+
+        await WriteAuditLogAsync(
+            "DeleteVariant",
+            "ProductVariant",
+            variant.Id.ToString(),
+            $"Məhsul variantı silindi. ProductId: {variant.ProductId}");
+
+        return Ok(ApiResponse<string>.Ok("Variant silindi"));
+    }
+
+    private Guid? GetUserIdOrNull()
+    {
+        var userId = User.FindFirstValue(ClaimTypes.NameIdentifier);
+
+        if (string.IsNullOrWhiteSpace(userId))
+            return null;
+
+        return Guid.Parse(userId);
+    }
+
+    private async Task WriteAuditLogAsync(
+        string action,
+        string entityName,
+        string? entityId,
+        string? description)
+    {
+        await _auditLogService.CreateAsync(
+            GetUserIdOrNull(),
+            action,
+            entityName,
+            entityId,
+            description,
+            HttpContext.Connection.RemoteIpAddress?.ToString(),
+            Request.Headers.UserAgent.ToString());
     }
 }

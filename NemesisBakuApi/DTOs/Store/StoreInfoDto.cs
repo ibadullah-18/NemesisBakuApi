@@ -1,10 +1,11 @@
-﻿namespace NemesisBakuApi.Entities;
+﻿namespace NemesisBakuApi.DTOs.Store;
 
-public class StoreInfo : BaseEntity
+public class StoreInfoDto
 {
-    public string StoreName { get; set; } = "NemesisBaku";
-    public string? Slogan { get; set; }
+    public Guid Id { get; set; }
 
+    public string StoreName { get; set; } = null!;
+    public string? Slogan { get; set; }
     public string? LogoUrl { get; set; }
 
     public string? AboutTitle { get; set; }
@@ -40,6 +41,4 @@ public class StoreInfo : BaseEntity
     public string? InstagramUrl { get; set; }
     public string? TikTokUrl { get; set; }
     public string? FacebookUrl { get; set; }
-
-    public bool IsActive { get; set; } = true;
 }

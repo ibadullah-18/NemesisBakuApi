@@ -41,6 +41,8 @@ public class AppDbContext : IdentityDbContext<AppUser, IdentityRole<Guid>, Guid>
     public DbSet<StoreInfo> StoreInfos { get; set; }
     public DbSet<RefreshToken> RefreshTokens { get; set; }
 
+    public DbSet<AuditLog> AuditLogs { get; set; }
+
     protected override void OnModelCreating(ModelBuilder builder)
     {
         base.OnModelCreating(builder);
@@ -123,15 +125,25 @@ public class AppDbContext : IdentityDbContext<AppUser, IdentityRole<Guid>, Guid>
 
         builder.Entity<PromoCode>()
             .HasIndex(x => x.Code)
-            .IsUnique();    
+            .IsUnique();
 
         builder.Entity<Order>()
             .HasIndex(x => x.OrderNumber)
             .IsUnique();
 
-        builder.Entity<BasketItem>()
-            .HasOne(x => x.Product)
-            .WithMany()
+        builder.Entity<RefreshToken>()
+            .HasIndex(x => x.Token)
+            .IsUnique();
+
+        builder.Entity<Product>()
+            .HasMany(x => x.BasketItems)
+            .WithOne(x => x.Product)
+            .HasForeignKey(x => x.ProductId)
+            .OnDelete(DeleteBehavior.NoAction);
+
+        builder.Entity<Product>()
+            .HasMany(x => x.Variants)
+            .WithOne(x => x.Product)
             .HasForeignKey(x => x.ProductId)
             .OnDelete(DeleteBehavior.NoAction);
 
@@ -178,10 +190,9 @@ public class AppDbContext : IdentityDbContext<AppUser, IdentityRole<Guid>, Guid>
             .HasQueryFilter(x => !x.IsDeleted);
 
         builder.Entity<RefreshToken>()
-            .HasIndex(x => x.Token)
-            .IsUnique();
+            .HasQueryFilter(x => !x.IsDeleted);
 
-        builder.Entity<RefreshToken>()
+        builder.Entity<AuditLog>()
             .HasQueryFilter(x => !x.IsDeleted);
     }
 }
