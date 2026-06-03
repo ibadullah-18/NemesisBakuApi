@@ -71,4 +71,37 @@ public class StoreInfoController : ControllerBase
 
         return Ok(ApiResponse<StoreInfoDto>.Ok(dto));
     }
+    [HttpPatch]
+    public async Task<IActionResult> Patch(StoreInfoPatchDto dto)
+    {
+        var store = await _context.StoreInfos.FirstOrDefaultAsync();
+
+        if (store == null)
+            return NotFound();
+
+        if (dto.StoreName != null)
+            store.StoreName = dto.StoreName;
+
+        if (dto.Slogan != null)
+            store.Slogan = dto.Slogan;
+
+        if (dto.WhatsAppNumber != null)
+            store.WhatsAppNumber = dto.WhatsAppNumber;
+
+        if (dto.PhoneNumber != null)
+            store.PhoneNumber = dto.PhoneNumber;
+
+        if (dto.Address != null)
+            store.Address = dto.Address;
+
+        if (dto.Latitude.HasValue)
+            store.Latitude = dto.Latitude;
+
+        if (dto.Longitude.HasValue)
+            store.Longitude = dto.Longitude;
+
+        await _context.SaveChangesAsync();
+
+        return Ok(ApiResponse<string>.Ok("Store məlumatları yeniləndi"));
+    }
 }

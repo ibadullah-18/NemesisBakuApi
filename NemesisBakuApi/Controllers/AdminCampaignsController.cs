@@ -17,26 +17,36 @@ public class AdminCampaignsController : ControllerBase
 {
     private readonly AppDbContext _context;
     private readonly IAuditLogService _auditLogService;
+    private readonly IFileService _fileService;
 
     public AdminCampaignsController(
         AppDbContext context,
-        IAuditLogService auditLogService)
+        IAuditLogService auditLogService,
+        IFileService fileService)
     {
         _context = context;
         _auditLogService = auditLogService;
+        _fileService = fileService;
     }
 
     [HttpPost]
-    public async Task<IActionResult> Create(CampaignCreateDto dto)
+    public async Task<IActionResult> Create([FromForm] CampaignCreateDto dto)
     {
         if (dto.EndDate.HasValue && dto.EndDate.Value < dto.StartDate)
             return BadRequest(ApiResponse<string>.Fail("Bitmə tarixi başlama tarixindən əvvəl ola bilməz"));
+
+        string? imageUrl = null;
+
+        if (dto.File != null && dto.File.Length > 0)
+        {
+            imageUrl = await _fileService.UploadImageAsync(dto.File, "campaigns");
+        }
 
         var campaign = new Campaign
         {
             Title = dto.Title,
             Description = dto.Description,
-            ImageUrl = dto.ImageUrl,
+            ImageUrl = imageUrl,
             RedirectUrl = dto.RedirectUrl,
             StartDate = dto.StartDate,
             EndDate = dto.EndDate,
@@ -77,7 +87,7 @@ public class AdminCampaignsController : ControllerBase
     }
 
     [HttpPut("{id}")]
-    public async Task<IActionResult> Update(Guid id, CampaignCreateDto dto)
+    public async Task<IActionResult> Update(Guid id, [FromForm] CampaignCreateDto dto)
     {
         var campaign = await _context.Campaigns.FirstOrDefaultAsync(x => x.Id == id);
 
@@ -87,9 +97,18 @@ public class AdminCampaignsController : ControllerBase
         if (dto.EndDate.HasValue && dto.EndDate.Value < dto.StartDate)
             return BadRequest(ApiResponse<string>.Fail("Bitmə tarixi başlama tarixindən əvvəl ola bilməz"));
 
+        if (dto.File != null && dto.File.Length > 0)
+        {
+            if (!string.IsNullOrWhiteSpace(campaign.ImageUrl))
+            {
+                await _fileService.DeleteImageAsync(campaign.ImageUrl);
+            }
+
+            campaign.ImageUrl = await _fileService.UploadImageAsync(dto.File, "campaigns");
+        }
+
         campaign.Title = dto.Title;
         campaign.Description = dto.Description;
-        campaign.ImageUrl = dto.ImageUrl;
         campaign.RedirectUrl = dto.RedirectUrl;
         campaign.StartDate = dto.StartDate;
         campaign.EndDate = dto.EndDate;
@@ -114,6 +133,11 @@ public class AdminCampaignsController : ControllerBase
 
         if (campaign == null)
             return NotFound(ApiResponse<string>.Fail("Kampaniya tapılmadı"));
+
+        if (!string.IsNullOrWhiteSpace(campaign.ImageUrl))
+        {
+            await _fileService.DeleteImageAsync(campaign.ImageUrl);
+        }
 
         campaign.IsDeleted = true;
         campaign.UpdatedAt = DateTime.UtcNow;

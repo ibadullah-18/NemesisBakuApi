@@ -51,6 +51,14 @@ public class OrdersController : ControllerBase
         if (dto.Items == null || !dto.Items.Any())
             return BadRequest(ApiResponse<string>.Fail("Sifariş üçün məhsul seçilməyib"));
 
+        var storeInfo = await _context.StoreInfos.FirstOrDefaultAsync();
+
+        if (storeInfo == null)
+            return BadRequest(ApiResponse<string>.Fail("Mağaza məlumatları tapılmadı"));
+
+        if (string.IsNullOrWhiteSpace(storeInfo.WhatsAppNumber))
+            return BadRequest(ApiResponse<string>.Fail("Mağaza WhatsApp nömrəsi təyin edilməyib"));
+
         decimal deliveryPrice = 0;
         decimal? deliveryDistanceKm = null;
 
@@ -68,9 +76,12 @@ public class OrdersController : ControllerBase
             if (string.IsNullOrWhiteSpace(dto.DeliveryTimeRange))
                 return BadRequest(ApiResponse<string>.Fail("Çatdırılma saat aralığı seçilməlidir"));
 
+            if (!storeInfo.Latitude.HasValue || !storeInfo.Longitude.HasValue)
+                return BadRequest(ApiResponse<string>.Fail("Mağaza koordinatları təyin edilməyib"));
+
             deliveryDistanceKm = DeliveryPriceCalculator.CalculateDistanceKm(
-                _deliverySettings.StoreLatitude,
-                _deliverySettings.StoreLongitude,
+                storeInfo.Latitude.Value,
+                storeInfo.Longitude.Value,
                 dto.Latitude.Value,
                 dto.Longitude.Value);
 
@@ -194,6 +205,17 @@ public class OrdersController : ControllerBase
 
             basketItem.ProductVariant.StockCount -= basketItem.Quantity;
 
+            if (basketItem.ProductVariant.StockCount > 0 &&
+                            basketItem.ProductVariant.StockCount <= 2)
+            {
+                await _whatsAppService.SendLowStockNotificationAsync(
+                    storeInfo.WhatsAppNumber,
+                    basketItem.Product.Name,
+                    basketItem.ProductVariant.Size.Value,
+                    basketItem.ProductVariant.Color.Name,
+                    basketItem.ProductVariant.StockCount);
+            }
+
             basketItem.IsDeleted = true;
             basketItem.UpdatedAt = DateTime.UtcNow;
         }
@@ -251,7 +273,9 @@ public class OrdersController : ControllerBase
 
         var message = BuildOrderWhatsAppMessage(order);
 
-        var sent = await _whatsAppService.SendOrderNotificationAsync(message);
+        var sent = await _whatsAppService.SendTextMessageAsync(
+            storeInfo.WhatsAppNumber,
+            message);
 
         order.IsWhatsappMessageSent = sent;
         order.WhatsappMessageSentAt = sent ? DateTime.UtcNow : null;

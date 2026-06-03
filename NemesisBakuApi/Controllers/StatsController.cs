@@ -60,19 +60,42 @@ public class StatsController : ControllerBase
         var totalUsers = await _context.Users
             .CountAsync(x => !x.IsDeleted);
 
+        var activeUsers = await _context.Users
+            .CountAsync(x => !x.IsDeleted && x.IsActive);
+
         var totalOrders = await _context.Orders.CountAsync();
-
-        var totalProducts = await _context.Products.CountAsync(x => x.IsActive);
-
-        var totalRevenue = await _context.Orders
-            .Where(x => x.Status == OrderStatus.Delivered)
-            .SumAsync(x => x.TotalPrice);
 
         var pendingOrders = await _context.Orders
             .CountAsync(x => x.Status == OrderStatus.Pending);
 
+        var confirmedOrders = await _context.Orders
+            .CountAsync(x => x.Status == OrderStatus.Confirmed);
+
+        var onDeliveryOrders = await _context.Orders
+            .CountAsync(x => x.Status == OrderStatus.OnDelivery);
+
         var deliveredOrders = await _context.Orders
             .CountAsync(x => x.Status == OrderStatus.Delivered);
+
+        var cancelledOrders = await _context.Orders
+            .CountAsync(x =>
+                x.Status == OrderStatus.Cancelled ||
+                x.Status == OrderStatus.Rejected);
+
+        var totalProducts = await _context.Products.CountAsync();
+
+        var activeProducts = await _context.Products
+            .CountAsync(x => x.IsActive);
+
+        var lowStockProducts = await _context.ProductVariants
+            .Where(x => x.IsActive && x.StockCount > 0 && x.StockCount <= 2)
+            .Select(x => x.ProductId)
+            .Distinct()
+            .CountAsync();
+
+        var totalRevenue = await _context.Orders
+            .Where(x => x.Status == OrderStatus.Delivered)
+            .SumAsync(x => x.TotalPrice);
 
         var totalPageViews = await _context.SiteVisits.CountAsync();
 
@@ -92,13 +115,20 @@ public class StatsController : ControllerBase
         var dto = new DashboardStatsDto
         {
             TotalUsers = totalUsers,
+            ActiveUsers = activeUsers,
+
             TotalOrders = totalOrders,
+            PendingOrders = pendingOrders,
+            ConfirmedOrders = confirmedOrders,
+            OnDeliveryOrders = onDeliveryOrders,
+            DeliveredOrders = deliveredOrders,
+            CancelledOrders = cancelledOrders,
+
             TotalProducts = totalProducts,
+            ActiveProducts = activeProducts,
+            LowStockProducts = lowStockProducts,
 
             TotalRevenue = totalRevenue,
-
-            PendingOrders = pendingOrders,
-            DeliveredOrders = deliveredOrders,
 
             TotalPageViews = totalPageViews,
             UniqueVisitors = uniqueVisitors,

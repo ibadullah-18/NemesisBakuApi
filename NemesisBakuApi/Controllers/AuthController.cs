@@ -35,44 +35,6 @@ public class AuthController : ControllerBase
     }
 
 
-    [HttpPost("register")]
-    public async Task<IActionResult> Register(RegisterDto dto)
-    {
-        if (dto.Password != dto.ConfirmPassword)
-        {
-            return BadRequest(ApiResponse<string>.Fail("Şifrələr uyğun deyil"));
-        }
-
-        var existingUser = await _userManager.FindByNameAsync(dto.PhoneNumber);
-
-        if (existingUser != null)
-        {
-            return BadRequest(ApiResponse<string>.Fail("Bu nömrə artıq qeydiyyatdan keçib"));
-        }
-
-        var user = new AppUser
-        {
-            FullName = dto.FullName,
-            UserName = dto.PhoneNumber,
-            PhoneNumber = dto.PhoneNumber,
-            Email = dto.Email,
-            DateOfBirth = dto.DateOfBirth,
-            LoyaltyCardCode = dto.LoyaltyCardCode
-        };
-
-        var result = await _userManager.CreateAsync(user, dto.Password);
-
-        if (!result.Succeeded)
-        {
-            return BadRequest(result.Errors);
-        }
-
-        await _userManager.AddToRoleAsync(user, "User");
-
-        return Ok(ApiResponse<string>.Ok(
-            "Qeydiyyat uğurla tamamlandı"));
-    }
-
     [HttpPost("login")]
     public async Task<IActionResult> Login(LoginDto dto)
     {

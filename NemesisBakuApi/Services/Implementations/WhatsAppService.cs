@@ -65,4 +65,31 @@ public class WhatsAppService : IWhatsAppService
 
         return response.IsSuccessStatusCode;
     }
+
+    public async Task<bool> SendLowStockNotificationAsync(
+    string sellerPhoneNumber,
+    string productName,
+    string size,
+    string color,
+    int stockCount)
+    {
+        var message =
+    $@"⚠️ STOK AZALIR
+
+Məhsul:
+{productName}
+
+Razmer:
+{size}
+
+Rəng:
+{color}
+
+Qalıq:
+{stockCount} ədəd";
+
+        return await SendTextMessageAsync(
+            sellerPhoneNumber,
+            message);
+    }
 }

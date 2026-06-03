@@ -42,6 +42,7 @@ public class AppDbContext : IdentityDbContext<AppUser, IdentityRole<Guid>, Guid>
     public DbSet<RefreshToken> RefreshTokens { get; set; }
 
     public DbSet<AuditLog> AuditLogs { get; set; }
+    public DbSet<Banner> Banners => Set<Banner>();
 
     protected override void OnModelCreating(ModelBuilder builder)
     {

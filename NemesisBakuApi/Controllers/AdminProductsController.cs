@@ -495,6 +495,46 @@ public class AdminProductsController : ControllerBase
         return Ok(ApiResponse<string>.Ok("Variant silindi"));
     }
 
+    [HttpGet("low-stock")]
+    public async Task<IActionResult> GetLowStockProducts([FromQuery] int threshold = 2)
+    {
+        if (threshold < 1)
+            threshold = 2;
+
+        var items = await _context.ProductVariants
+            .Include(x => x.Product)
+                .ThenInclude(p => p.Images)
+            .Include(x => x.Size)
+            .Include(x => x.Color)
+            .Where(x =>
+                x.IsActive &&
+                x.StockCount > 0 &&
+                x.StockCount <= threshold)
+            .OrderBy(x => x.StockCount)
+            .Select(x => new LowStockProductDto
+            {
+                ProductId = x.ProductId,
+                VariantId = x.Id,
+
+                ProductName = x.Product.Name,
+                ProductCode = x.Product.ProductCode,
+
+                SizeValue = x.Size.Value,
+                ColorName = x.Color.Name,
+
+                StockCount = x.StockCount,
+
+                MainImageUrl = x.Product.Images
+                    .OrderByDescending(i => i.IsMain)
+                    .ThenBy(i => i.Order)
+                    .Select(i => i.ImageUrl)
+                    .FirstOrDefault()
+            })
+            .ToListAsync();
+
+        return Ok(ApiResponse<List<LowStockProductDto>>.Ok(items));
+    }
+
     private Guid? GetUserIdOrNull()
     {
         var userId = User.FindFirstValue(ClaimTypes.NameIdentifier);
