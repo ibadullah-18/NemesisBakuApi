@@ -283,7 +283,8 @@ public class ProductsController : ControllerBase
                 .Select(x => new FilterOptionDto
                 {
                     Id = x.Id,
-                    Name = x.Name
+                    Name = x.Name,
+                    ImageUrl = x.ImageUrl
                 })
                 .ToList(),
 

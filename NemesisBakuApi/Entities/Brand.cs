@@ -3,7 +3,8 @@
 public class Brand : BaseEntity
 {
     public string Name { get; set; } = null!;
-    public string? LogoUrl { get; set; }
+    public string? ImageUrl { get; set; }
+
 
     public bool IsActive { get; set; } = true;
 
