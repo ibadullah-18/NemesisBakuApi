@@ -120,4 +120,25 @@ public class FavoritesController : ControllerBase
 
         return Ok(ApiResponse<bool>.Ok(exists));
     }
+
+    [HttpDelete("{productId}")]
+    [Authorize]
+    public async Task<IActionResult> Remove(Guid productId)
+    {
+        var userId = GetUserId();
+
+        var favorite = await _context.Favorites
+            .FirstOrDefaultAsync(x =>
+                x.UserId == userId &&
+                x.ProductId == productId);
+
+        if (favorite == null)
+            return NotFound(ApiResponse<string>.Fail("Favorit tapılmadı"));
+
+        _context.Favorites.Remove(favorite);
+
+        await _context.SaveChangesAsync();
+
+        return Ok(ApiResponse<string>.Ok("Favoritdən silindi"));
+    }
 }

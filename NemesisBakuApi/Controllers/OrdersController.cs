@@ -169,7 +169,9 @@ public class OrdersController : ControllerBase
         foreach (var basketItem in basketItems)
         {
             var unitPrice =
-                basketItem.Product.IsDiscounted && basketItem.Product.DiscountPrice.HasValue
+                basketItem.Product.DiscountPrice.HasValue &&
+                basketItem.Product.DiscountPrice.Value > 0 &&
+                basketItem.Product.DiscountPrice.Value < basketItem.Product.Price
                     ? basketItem.Product.DiscountPrice.Value
                     : basketItem.Product.Price;
 

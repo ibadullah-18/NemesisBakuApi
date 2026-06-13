@@ -5,5 +5,8 @@ public class BasketSummaryDto
     public List<BasketItemDto> Items { get; set; } = new();
 
     public int TotalQuantity { get; set; }
+
+    public decimal OriginalTotalPrice { get; set; }
+    public decimal TotalDiscountAmount { get; set; }
     public decimal TotalPrice { get; set; }
 }

@@ -36,7 +36,7 @@ public class BasketController : ControllerBase
     {
         var userId = GetUserId();
 
-        var items = await _context.BasketItems
+        var basketItems = await _context.BasketItems
             .Include(x => x.Product)
                 .ThenInclude(p => p.Images)
             .Include(x => x.ProductVariant)
@@ -45,7 +45,20 @@ public class BasketController : ControllerBase
                 .ThenInclude(v => v.Color)
             .Where(x => x.UserId == userId)
             .OrderByDescending(x => x.CreatedAt)
-            .Select(x => new BasketItemDto
+            .ToListAsync();
+
+        var items = basketItems.Select(x =>
+        {
+            var originalPrice = x.Product.Price;
+
+            var currentPrice =
+                x.Product.DiscountPrice.HasValue &&
+                x.Product.DiscountPrice.Value > 0 &&
+                x.Product.DiscountPrice.Value < x.Product.Price
+                    ? x.Product.DiscountPrice.Value
+                    : x.Product.Price;
+
+            return new BasketItemDto
             {
                 Id = x.Id,
                 ProductId = x.ProductId,
@@ -53,6 +66,7 @@ public class BasketController : ControllerBase
 
                 ProductName = x.Product.Name,
                 ProductCode = x.Product.ProductCode,
+
                 ProductImageUrl = x.Product.Images
                     .OrderByDescending(i => i.IsMain)
                     .ThenBy(i => i.Order)
@@ -63,25 +77,29 @@ public class BasketController : ControllerBase
                 ColorName = x.ProductVariant.Color.Name,
                 ColorHexCode = x.ProductVariant.Color.HexCode,
 
-                UnitPrice = x.Product.IsDiscounted && x.Product.DiscountPrice.HasValue
-                    ? x.Product.DiscountPrice.Value
-                    : x.Product.Price,
+                OriginalPrice = originalPrice,
+                UnitPrice = currentPrice,
+                DiscountAmount = (originalPrice - currentPrice) * x.Quantity,
 
                 Quantity = x.Quantity,
 
-                TotalPrice =
-                    (x.Product.IsDiscounted && x.Product.DiscountPrice.HasValue
-                        ? x.Product.DiscountPrice.Value
-                        : x.Product.Price) * x.Quantity,
+                OriginalTotalPrice = originalPrice * x.Quantity,
+                TotalPrice = currentPrice * x.Quantity,
+
+                HasDiscount = currentPrice < originalPrice,
 
                 StockCount = x.ProductVariant.StockCount
-            })
-            .ToListAsync();
+            };
+        }).ToList();
 
         var summary = new BasketSummaryDto
         {
             Items = items,
+
             TotalQuantity = items.Sum(x => x.Quantity),
+
+            OriginalTotalPrice = items.Sum(x => x.OriginalTotalPrice),
+            TotalDiscountAmount = items.Sum(x => x.DiscountAmount),
             TotalPrice = items.Sum(x => x.TotalPrice)
         };
 

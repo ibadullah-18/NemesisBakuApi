@@ -15,9 +15,16 @@ public class BasketItemDto
     public string ColorName { get; set; } = null!;
     public string? ColorHexCode { get; set; }
 
+    public decimal OriginalPrice { get; set; }
     public decimal UnitPrice { get; set; }
+    public decimal DiscountAmount { get; set; }
+
     public int Quantity { get; set; }
+
+    public decimal OriginalTotalPrice { get; set; }
     public decimal TotalPrice { get; set; }
+
+    public bool HasDiscount { get; set; }
 
     public int StockCount { get; set; }
 }
