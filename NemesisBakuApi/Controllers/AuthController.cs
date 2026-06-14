@@ -19,19 +19,22 @@ public class AuthController : ControllerBase
     private readonly JwtTokenGenerator _jwtTokenGenerator;
     private readonly AppDbContext _context;
     private readonly IWhatsAppService _whatsAppService;
+    private readonly IFileService _fileService;
 
     public AuthController(
         UserManager<AppUser> userManager,
         SignInManager<AppUser> signInManager,
         JwtTokenGenerator jwtTokenGenerator,
         AppDbContext context,
-        IWhatsAppService whatsAppService)
+        IWhatsAppService whatsAppService,
+        IFileService fileService)
     {
         _userManager = userManager;
         _signInManager = signInManager;
         _jwtTokenGenerator = jwtTokenGenerator;
         _context = context;
         _whatsAppService = whatsAppService;
+        _fileService = fileService;
     }
 
 
@@ -125,7 +128,8 @@ public class AuthController : ControllerBase
     }
 
     [HttpPost("verify-register-otp")]
-    public async Task<IActionResult> VerifyRegisterOtp(VerifyRegisterOtpDto dto)
+    [Consumes("multipart/form-data")]
+    public async Task<IActionResult> VerifyRegisterOtp([FromForm] VerifyRegisterOtpDto dto)
     {
         if (dto.Password != dto.ConfirmPassword)
         {
@@ -154,6 +158,15 @@ public class AuthController : ControllerBase
             return BadRequest(ApiResponse<string>.Fail("Təsdiq kodu yanlışdır və ya vaxtı bitib"));
         }
 
+        string? profileImageUrl = null;
+
+        if (dto.ProfileImage != null)
+        {
+            profileImageUrl = await _fileService.UploadImageAsync(
+                dto.ProfileImage,
+                "profiles");
+        }
+
         var user = new AppUser
         {
             FullName = dto.FullName,
@@ -161,13 +174,20 @@ public class AuthController : ControllerBase
             PhoneNumber = dto.PhoneNumber,
             Email = dto.Email,
             DateOfBirth = dto.DateOfBirth,
-            LoyaltyCardCode = dto.LoyaltyCardCode
+            LoyaltyCardCode = dto.LoyaltyCardCode,
+            ProfileImageUrl = profileImageUrl,
+            IsActive = true
         };
 
         var result = await _userManager.CreateAsync(user, dto.Password);
 
         if (!result.Succeeded)
         {
+            if (!string.IsNullOrWhiteSpace(profileImageUrl))
+            {
+                await _fileService.DeleteImageAsync(profileImageUrl);
+            }
+
             return BadRequest(result.Errors);
         }
 

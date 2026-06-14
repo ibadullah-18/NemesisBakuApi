@@ -43,6 +43,7 @@ public class AppDbContext : IdentityDbContext<AppUser, IdentityRole<Guid>, Guid>
 
     public DbSet<AuditLog> AuditLogs { get; set; }
     public DbSet<Banner> Banners => Set<Banner>();
+    public DbSet<UserAddress> UserAddresses { get; set; }
 
     protected override void OnModelCreating(ModelBuilder builder)
     {
@@ -194,6 +195,17 @@ public class AppDbContext : IdentityDbContext<AppUser, IdentityRole<Guid>, Guid>
             .HasQueryFilter(x => !x.IsDeleted);
 
         builder.Entity<AuditLog>()
+            .HasQueryFilter(x => !x.IsDeleted);
+
+        builder.Entity<UserAddress>()
+            .Property(x => x.Latitude)
+            .HasColumnType("decimal(18,8)");
+
+        builder.Entity<UserAddress>()
+            .Property(x => x.Longitude)
+            .HasColumnType("decimal(18,8)");
+
+        builder.Entity<UserAddress>()
             .HasQueryFilter(x => !x.IsDeleted);
     }
 }

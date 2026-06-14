@@ -26,4 +26,7 @@ public class CreateOrderDto
     public string? Note { get; set; }
 
     public string? PromoCode { get; set; }
+    public Guid? SavedAddressId { get; set; }
+    public bool SaveAddressToProfile { get; set; } = false;
+    public string? AddressTitle { get; set; }
 }

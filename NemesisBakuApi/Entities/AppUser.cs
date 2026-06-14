@@ -22,4 +22,5 @@ public class AppUser : IdentityUser<Guid>
     public ICollection<BasketItem> BasketItems { get; set; } = new List<BasketItem>();
     public ICollection<Favorite> Favorites { get; set; } = new List<Favorite>();
     public ICollection<Order> Orders { get; set; } = new List<Order>();
+    public ICollection<UserAddress> Addresses { get; set; } = new List<UserAddress>();
 }

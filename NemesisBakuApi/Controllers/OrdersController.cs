@@ -64,6 +64,27 @@ public class OrdersController : ControllerBase
 
         if (dto.DeliveryType == DeliveryType.HomeDelivery)
         {
+            if (dto.SavedAddressId.HasValue)
+            {
+                var savedAddress = await _context.UserAddresses
+                    .FirstOrDefaultAsync(x =>
+                        x.Id == dto.SavedAddressId.Value &&
+                        x.UserId == userId);
+
+                if (savedAddress == null)
+                    return BadRequest(ApiResponse<string>.Fail("Seçilmiş ünvan tapılmadı"));
+
+                dto.AddressText = savedAddress.AddressText;
+                dto.Latitude = savedAddress.Latitude;
+                dto.Longitude = savedAddress.Longitude;
+                dto.BuildingNumber = savedAddress.BuildingNumber;
+                dto.Floor = savedAddress.Floor;
+                dto.Apartment = savedAddress.Apartment;
+
+                if (string.IsNullOrWhiteSpace(dto.Note))
+                    dto.Note = savedAddress.Note;
+            }
+
             if (string.IsNullOrWhiteSpace(dto.AddressText))
                 return BadRequest(ApiResponse<string>.Fail("Ünvana çatdırılma üçün ünvan məcburidir"));
 
@@ -207,17 +228,6 @@ public class OrdersController : ControllerBase
 
             basketItem.ProductVariant.StockCount -= basketItem.Quantity;
 
-            if (basketItem.ProductVariant.StockCount > 0 &&
-                            basketItem.ProductVariant.StockCount <= 2)
-            {
-                await _whatsAppService.SendLowStockNotificationAsync(
-                    storeInfo.WhatsAppNumber,
-                    basketItem.Product.Name,
-                    basketItem.ProductVariant.Size.Value,
-                    basketItem.ProductVariant.Color.Name,
-                    basketItem.ProductVariant.StockCount);
-            }
-
             basketItem.IsDeleted = true;
             basketItem.UpdatedAt = DateTime.UtcNow;
         }
@@ -267,6 +277,30 @@ public class OrdersController : ControllerBase
         order.TotalProductPrice = totalProductPrice;
         order.PromoDiscountAmount = promoDiscountAmount;
         order.TotalPrice = totalProductPrice - promoDiscountAmount + order.DeliveryPrice;
+
+        if (dto.DeliveryType == DeliveryType.HomeDelivery &&
+            dto.SaveAddressToProfile &&
+            !dto.SavedAddressId.HasValue &&
+            !string.IsNullOrWhiteSpace(dto.AddressText) &&
+            dto.Latitude.HasValue &&
+            dto.Longitude.HasValue)
+        {
+            var address = new UserAddress
+            {
+                UserId = userId,
+                Title = string.IsNullOrWhiteSpace(dto.AddressTitle) ? "Ünvan" : dto.AddressTitle,
+                AddressText = dto.AddressText,
+                Latitude = dto.Latitude.Value,
+                Longitude = dto.Longitude.Value,
+                BuildingNumber = dto.BuildingNumber,
+                Floor = dto.Floor,
+                Apartment = dto.Apartment,
+                Note = dto.Note,
+                IsDefault = false
+            };
+
+            _context.UserAddresses.Add(address);
+        }
 
         _context.Orders.Add(order);
 
