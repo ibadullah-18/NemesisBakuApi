@@ -41,10 +41,12 @@ public class AdminColorsController : ControllerBase
     [HttpGet]
     public async Task<IActionResult> GetAll()
     {
-        return Ok(ApiResponse<object>.Ok(
-            await _context.Colors
-                .OrderBy(x => x.Name)
-                .ToListAsync()));
+        var colors = await _context.Colors
+            .Where(x => !x.IsDeleted)
+            .OrderBy(x => x.Name)
+            .ToListAsync();
+
+        return Ok(ApiResponse<object>.Ok(colors));
     }
 
     [HttpDelete("{id}")]
@@ -57,11 +59,11 @@ public class AdminColorsController : ControllerBase
             return NotFound(ApiResponse<string>.Fail("Rəng tapılmadı"));
 
         var hasVariants = await _context.ProductVariants
-            .AnyAsync(x => x.ColorId == id);
+            .AnyAsync(x => x.ColorId == id && !x.IsDeleted);
 
         if (hasVariants)
             return BadRequest(ApiResponse<string>.Fail(
-                "Bu rəng məhsullarda istifadə olunur"));
+                "Bu rəng məhsul variantlarında istifadə olunur. Əvvəl həmin variantları silin"));
 
         color.IsDeleted = true;
         color.UpdatedAt = DateTime.UtcNow;
