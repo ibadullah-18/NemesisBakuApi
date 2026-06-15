@@ -46,4 +46,28 @@ public class AdminCategoriesController : ControllerBase
                 .OrderBy(x => x.Name)
                 .ToListAsync()));
     }
+
+    [HttpDelete("{id}")]
+    public async Task<IActionResult> DeleteCategory(Guid id)
+    {
+        var category = await _context.Categories
+            .FirstOrDefaultAsync(x => x.Id == id);
+
+        if (category == null)
+            return NotFound(ApiResponse<string>.Fail("Kateqoriya tapılmadı"));
+
+        var hasProducts = await _context.Products
+            .AnyAsync(x => x.CategoryId == id);
+
+        if (hasProducts)
+            return BadRequest(ApiResponse<string>.Fail(
+                "Bu kateqoriyada məhsullar var, əvvəl məhsulları silin"));
+
+        category.IsDeleted = true;
+        category.UpdatedAt = DateTime.UtcNow;
+
+        await _context.SaveChangesAsync();
+
+        return Ok(ApiResponse<string>.Ok("Kateqoriya silindi"));
+    }
 }

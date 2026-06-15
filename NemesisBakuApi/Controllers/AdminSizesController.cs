@@ -44,4 +44,28 @@ public class AdminSizesController : ControllerBase
                 .OrderBy(x => x.Value)
                 .ToListAsync()));
     }
+
+    [HttpDelete("{id}")]
+    public async Task<IActionResult> DeleteSize(Guid id)
+    {
+        var size = await _context.Sizes
+            .FirstOrDefaultAsync(x => x.Id == id);
+
+        if (size == null)
+            return NotFound(ApiResponse<string>.Fail("Razmer tapılmadı"));
+
+        var hasVariants = await _context.ProductVariants
+            .AnyAsync(x => x.SizeId == id);
+
+        if (hasVariants)
+            return BadRequest(ApiResponse<string>.Fail(
+                "Bu razmer məhsullarda istifadə olunur"));
+
+        size.IsDeleted = true;
+        size.UpdatedAt = DateTime.UtcNow;
+
+        await _context.SaveChangesAsync();
+
+        return Ok(ApiResponse<string>.Ok("Razmer silindi"));
+    }
 }

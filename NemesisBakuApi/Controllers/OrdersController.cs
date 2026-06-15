@@ -483,4 +483,40 @@ public class OrdersController : ControllerBase
 
         return sb.ToString();
     }
+
+    [HttpPost("calculate-delivery")]
+    public async Task<IActionResult> CalculateDelivery(CalculateDeliveryDto dto)
+    {
+        if (dto.Latitude < -90 || dto.Latitude > 90)
+            return BadRequest(ApiResponse<string>.Fail("Latitude düzgün deyil"));
+
+        if (dto.Longitude < -180 || dto.Longitude > 180)
+            return BadRequest(ApiResponse<string>.Fail("Longitude düzgün deyil"));
+
+        var storeInfo = await _context.StoreInfos.FirstOrDefaultAsync();
+
+        if (storeInfo == null)
+            return BadRequest(ApiResponse<string>.Fail("Mağaza məlumatları tapılmadı"));
+
+        if (!storeInfo.Latitude.HasValue || !storeInfo.Longitude.HasValue)
+            return BadRequest(ApiResponse<string>.Fail("Mağaza koordinatları təyin edilməyib"));
+
+        var distanceKm = DeliveryPriceCalculator.CalculateDistanceKm(
+            storeInfo.Latitude.Value,
+            storeInfo.Longitude.Value,
+            dto.Latitude,
+            dto.Longitude);
+
+        var deliveryPrice = DeliveryPriceCalculator.CalculateDeliveryPrice(
+            distanceKm,
+            _deliverySettings);
+
+        var result = new CalculateDeliveryResultDto
+        {
+            DistanceKm = distanceKm,
+            DeliveryPrice = deliveryPrice
+        };
+
+        return Ok(ApiResponse<CalculateDeliveryResultDto>.Ok(result));
+    }
 }

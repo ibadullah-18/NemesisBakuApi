@@ -46,4 +46,28 @@ public class AdminColorsController : ControllerBase
                 .OrderBy(x => x.Name)
                 .ToListAsync()));
     }
+
+    [HttpDelete("{id}")]
+    public async Task<IActionResult> DeleteColor(Guid id)
+    {
+        var color = await _context.Colors
+            .FirstOrDefaultAsync(x => x.Id == id);
+
+        if (color == null)
+            return NotFound(ApiResponse<string>.Fail("Rəng tapılmadı"));
+
+        var hasVariants = await _context.ProductVariants
+            .AnyAsync(x => x.ColorId == id);
+
+        if (hasVariants)
+            return BadRequest(ApiResponse<string>.Fail(
+                "Bu rəng məhsullarda istifadə olunur"));
+
+        color.IsDeleted = true;
+        color.UpdatedAt = DateTime.UtcNow;
+
+        await _context.SaveChangesAsync();
+
+        return Ok(ApiResponse<string>.Ok("Rəng silindi"));
+    }
 }
