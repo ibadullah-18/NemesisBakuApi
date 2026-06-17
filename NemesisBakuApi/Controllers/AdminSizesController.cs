@@ -39,10 +39,12 @@ public class AdminSizesController : ControllerBase
     [HttpGet]
     public async Task<IActionResult> GetAll()
     {
-        return Ok(ApiResponse<object>.Ok(
-            await _context.Sizes
-                .OrderBy(x => x.Value)
-                .ToListAsync()));
+        var sizes = await _context.Sizes
+            .Where(x => !x.IsDeleted)
+            .OrderBy(x => x.Value)
+            .ToListAsync();
+
+        return Ok(ApiResponse<object>.Ok(sizes));
     }
 
     [HttpDelete("{id}")]
@@ -55,11 +57,11 @@ public class AdminSizesController : ControllerBase
             return NotFound(ApiResponse<string>.Fail("Razmer tapılmadı"));
 
         var hasVariants = await _context.ProductVariants
-            .AnyAsync(x => x.SizeId == id);
+            .AnyAsync(x => x.SizeId == id && !x.IsDeleted);
 
         if (hasVariants)
             return BadRequest(ApiResponse<string>.Fail(
-                "Bu razmer məhsullarda istifadə olunur"));
+                "Bu razmer məhsul variantlarında istifadə olunur. Əvvəl həmin variantları silin"));
 
         size.IsDeleted = true;
         size.UpdatedAt = DateTime.UtcNow;

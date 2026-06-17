@@ -45,6 +45,9 @@ public class AppDbContext : IdentityDbContext<AppUser, IdentityRole<Guid>, Guid>
     public DbSet<Banner> Banners => Set<Banner>();
     public DbSet<UserAddress> UserAddresses { get; set; }
 
+    public DbSet<PromoPage> PromoPages { get; set; }
+    public DbSet<PromoPageProduct> PromoPageProducts { get; set; }
+
     protected override void OnModelCreating(ModelBuilder builder)
     {
         base.OnModelCreating(builder);
@@ -206,6 +209,32 @@ public class AppDbContext : IdentityDbContext<AppUser, IdentityRole<Guid>, Guid>
             .HasColumnType("decimal(18,8)");
 
         builder.Entity<UserAddress>()
+            .HasQueryFilter(x => !x.IsDeleted);
+
+        builder.Entity<PromoPage>()
+            .HasIndex(x => new { x.Type, x.SlotNumber })
+            .IsUnique();
+
+        builder.Entity<PromoPageProduct>()
+            .HasIndex(x => new { x.PromoPageId, x.ProductId })
+            .IsUnique();
+
+        builder.Entity<PromoPage>()
+            .HasMany(x => x.Products)
+            .WithOne(x => x.PromoPage)
+            .HasForeignKey(x => x.PromoPageId)
+            .OnDelete(DeleteBehavior.NoAction);
+
+        builder.Entity<PromoPageProduct>()
+            .HasOne(x => x.Product)
+            .WithMany()
+            .HasForeignKey(x => x.ProductId)
+            .OnDelete(DeleteBehavior.NoAction);
+
+        builder.Entity<PromoPage>()
+            .HasQueryFilter(x => !x.IsDeleted);
+
+        builder.Entity<PromoPageProduct>()
             .HasQueryFilter(x => !x.IsDeleted);
     }
 }
