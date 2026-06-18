@@ -6,6 +6,7 @@ using NemesisBakuApi.DTOs.PromoPage;
 using NemesisBakuApi.Entities;
 using NemesisBakuApi.Enums;
 using NemesisBakuApi.Helpers;
+using NemesisBakuApi.Services.Interfaces;
 
 namespace NemesisBakuApi.Controllers;
 
@@ -15,14 +16,17 @@ namespace NemesisBakuApi.Controllers;
 public class AdminPromoPagesController : ControllerBase
 {
     private readonly AppDbContext _context;
+    private readonly IFileService _fileService;
 
-    public AdminPromoPagesController(AppDbContext context)
+    public AdminPromoPagesController(AppDbContext context, IFileService fileService)
     {
         _context = context;
+        _fileService = fileService;
     }
 
     [HttpPost]
-    public async Task<IActionResult> Create(PromoPageCreateDto dto)
+    [Consumes("multipart/form-data")]
+    public async Task<IActionResult> Create([FromForm] PromoPageCreateDto dto)
     {
         if (string.IsNullOrWhiteSpace(dto.Title))
             return BadRequest(ApiResponse<string>.Fail("Başlıq boş ola bilməz"));
@@ -52,14 +56,23 @@ public class AdminPromoPagesController : ControllerBase
             ? "nemesisbakucomp"
             : "nemesisbakuban";
 
-        var promoPage = new Entities.PromoPage
+        string? imageUrl = null;
+
+        if (dto.File != null)
+        {
+            imageUrl = await _fileService.UploadImageAsync(
+                dto.File,
+                "promo-pages");
+        }
+
+        var promoPage = new PromoPage
         {
             Title = dto.Title,
             Description = dto.Description,
             Type = dto.Type,
             SlotNumber = slot,
             Slug = $"{slugPrefix}{slot}",
-            ImageUrl = dto.ImageUrl,
+            ImageUrl = imageUrl,
             StartDate = dto.StartDate,
             EndDate = dto.EndDate,
             IsActive = dto.IsActive
@@ -67,19 +80,22 @@ public class AdminPromoPagesController : ControllerBase
 
         if (dto.ProductIds.Any())
         {
-            var products = await _context.Products
+            var validProductIds = await _context.Products
                 .Where(x => dto.ProductIds.Contains(x.Id))
                 .Select(x => x.Id)
                 .ToListAsync();
 
+            var order = 0;
+
             foreach (var productId in dto.ProductIds.Distinct())
             {
-                if (!products.Contains(productId))
+                if (!validProductIds.Contains(productId))
                     continue;
 
                 promoPage.Products.Add(new PromoPageProduct
                 {
-                    ProductId = productId
+                    ProductId = productId,
+                    Order = order++
                 });
             }
         }
@@ -126,7 +142,8 @@ public class AdminPromoPagesController : ControllerBase
     }
 
     [HttpPut("{id}")]
-    public async Task<IActionResult> Update(Guid id, PromoPageUpdateDto dto)
+    [Consumes("multipart/form-data")]
+    public async Task<IActionResult> Update(Guid id, [FromForm] PromoPageUpdateDto dto)
     {
         var promoPage = await _context.PromoPages
             .Include(x => x.Products)
@@ -143,11 +160,22 @@ public class AdminPromoPagesController : ControllerBase
 
         promoPage.Title = dto.Title;
         promoPage.Description = dto.Description;
-        promoPage.ImageUrl = dto.ImageUrl;
         promoPage.StartDate = dto.StartDate;
         promoPage.EndDate = dto.EndDate;
         promoPage.IsActive = dto.IsActive;
         promoPage.UpdatedAt = DateTime.UtcNow;
+
+        if (dto.File != null)
+        {
+            if (!string.IsNullOrWhiteSpace(promoPage.ImageUrl))
+            {
+                await _fileService.DeleteImageAsync(promoPage.ImageUrl);
+            }
+
+            promoPage.ImageUrl = await _fileService.UploadImageAsync(
+                dto.File,
+                "promo-pages");
+        }
 
         foreach (var oldProduct in promoPage.Products)
         {
@@ -205,5 +233,41 @@ public class AdminPromoPagesController : ControllerBase
         await _context.SaveChangesAsync();
 
         return Ok(ApiResponse<string>.Ok("Promo səhifə silindi"));
+    }
+
+    [HttpGet("active")]
+    public async Task<IActionResult> GetActive([FromQuery] PromoPageType? type)
+    {
+        var now = DateTime.UtcNow;
+
+        var query = _context.PromoPages
+            .Where(x =>
+                x.IsActive &&
+                x.StartDate <= now &&
+                x.EndDate >= now);
+
+        if (type.HasValue)
+        {
+            query = query.Where(x => x.Type == type.Value);
+        }
+
+        var items = await query
+            .OrderBy(x => x.Type)
+            .ThenBy(x => x.SlotNumber)
+            .Select(x => new
+            {
+                x.Id,
+                x.Title,
+                x.Description,
+                x.Type,
+                x.SlotNumber,
+                x.Slug,
+                x.ImageUrl,
+                x.StartDate,
+                x.EndDate
+            })
+            .ToListAsync();
+
+        return Ok(ApiResponse<object>.Ok(items));
     }
 }

@@ -2,6 +2,7 @@
 using Microsoft.EntityFrameworkCore;
 using NemesisBakuApi.Data;
 using NemesisBakuApi.DTOs.Product;
+using NemesisBakuApi.Enums;
 using NemesisBakuApi.Helpers;
 
 namespace NemesisBakuApi.Controllers;
@@ -20,7 +21,7 @@ public class PromoPagesController : ControllerBase
     [HttpGet("{slug}")]
     public async Task<IActionResult> GetBySlug(string slug)
     {
-        var now = DateTime.UtcNow;
+        var now = DateTime.Now;
 
         var promoPage = await _context.PromoPages
             .Include(x => x.Products)
@@ -77,5 +78,41 @@ public class PromoPagesController : ControllerBase
         };
 
         return Ok(ApiResponse<object>.Ok(result));
+    }
+
+    [HttpGet("active")]
+    public async Task<IActionResult> GetActive([FromQuery] PromoPageType? type)
+    {
+        var now = DateTime.Now;
+
+        var query = _context.PromoPages
+            .Where(x =>
+                x.IsActive &&
+                x.StartDate <= now &&
+                x.EndDate >= now);
+
+        if (type.HasValue)
+        {
+            query = query.Where(x => x.Type == type.Value);
+        }
+
+        var items = await query
+            .OrderBy(x => x.Type)
+            .ThenBy(x => x.SlotNumber)
+            .Select(x => new
+            {
+                x.Id,
+                x.Title,
+                x.Description,
+                x.Type,
+                x.SlotNumber,
+                x.Slug,
+                x.ImageUrl,
+                x.StartDate,
+                x.EndDate
+            })
+            .ToListAsync();
+
+        return Ok(ApiResponse<object>.Ok(items));
     }
 }

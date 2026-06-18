@@ -48,6 +48,9 @@ public class AppDbContext : IdentityDbContext<AppUser, IdentityRole<Guid>, Guid>
     public DbSet<PromoPage> PromoPages { get; set; }
     public DbSet<PromoPageProduct> PromoPageProducts { get; set; }
 
+    public DbSet<HomeSection> HomeSections { get; set; }
+    public DbSet<HomeSectionProduct> HomeSectionProducts { get; set; }
+
     protected override void OnModelCreating(ModelBuilder builder)
     {
         base.OnModelCreating(builder);
@@ -235,6 +238,28 @@ public class AppDbContext : IdentityDbContext<AppUser, IdentityRole<Guid>, Guid>
             .HasQueryFilter(x => !x.IsDeleted);
 
         builder.Entity<PromoPageProduct>()
+            .HasQueryFilter(x => !x.IsDeleted);
+
+        builder.Entity<HomeSection>()
+            .HasMany(x => x.Products)
+            .WithOne(x => x.HomeSection)
+            .HasForeignKey(x => x.HomeSectionId)
+            .OnDelete(DeleteBehavior.NoAction);
+
+        builder.Entity<HomeSectionProduct>()
+            .HasOne(x => x.Product)
+            .WithMany()
+            .HasForeignKey(x => x.ProductId)
+            .OnDelete(DeleteBehavior.NoAction);
+
+        builder.Entity<HomeSectionProduct>()
+            .HasIndex(x => new { x.HomeSectionId, x.ProductId })
+            .IsUnique();
+
+        builder.Entity<HomeSection>()
+            .HasQueryFilter(x => !x.IsDeleted);
+
+        builder.Entity<HomeSectionProduct>()
             .HasQueryFilter(x => !x.IsDeleted);
     }
 }
