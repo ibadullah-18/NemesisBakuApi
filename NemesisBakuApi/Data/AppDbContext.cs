@@ -218,10 +218,6 @@ public class AppDbContext : IdentityDbContext<AppUser, IdentityRole<Guid>, Guid>
             .HasIndex(x => new { x.Type, x.SlotNumber })
             .IsUnique();
 
-        builder.Entity<PromoPageProduct>()
-            .HasIndex(x => new { x.PromoPageId, x.ProductId })
-            .IsUnique();
-
         builder.Entity<PromoPage>()
             .HasMany(x => x.Products)
             .WithOne(x => x.PromoPage)

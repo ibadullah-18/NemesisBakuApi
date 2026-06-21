@@ -132,26 +132,36 @@ public class BasketController : ControllerBase
         if (variant.StockCount <= 0)
             return BadRequest(ApiResponse<string>.Fail("Bu məhsul stokda yoxdur"));
 
+        if (dto.Quantity > variant.StockCount)
+            return BadRequest(ApiResponse<string>.Fail("Stokda kifayət qədər məhsul yoxdur"));
+
         var existingItem = await _context.BasketItems
+            .IgnoreQueryFilters()
             .FirstOrDefaultAsync(x =>
                 x.UserId == userId &&
                 x.ProductVariantId == dto.ProductVariantId);
 
         if (existingItem != null)
         {
-            var newQuantity = existingItem.Quantity + dto.Quantity;
+            if (existingItem.IsDeleted)
+            {
+                existingItem.IsDeleted = false;
+                existingItem.Quantity = dto.Quantity;
+                existingItem.UpdatedAt = DateTime.UtcNow;
+            }
+            else
+            {
+                var newQuantity = existingItem.Quantity + dto.Quantity;
 
-            if (newQuantity > variant.StockCount)
-                return BadRequest(ApiResponse<string>.Fail("Stokda kifayət qədər məhsul yoxdur"));
+                if (newQuantity > variant.StockCount)
+                    return BadRequest(ApiResponse<string>.Fail("Stokda kifayət qədər məhsul yoxdur"));
 
-            existingItem.Quantity = newQuantity;
-            existingItem.UpdatedAt = DateTime.UtcNow;
+                existingItem.Quantity = newQuantity;
+                existingItem.UpdatedAt = DateTime.UtcNow;
+            }
         }
         else
         {
-            if (dto.Quantity > variant.StockCount)
-                return BadRequest(ApiResponse<string>.Fail("Stokda kifayət qədər məhsul yoxdur"));
-
             var basketItem = new BasketItem
             {
                 UserId = userId,

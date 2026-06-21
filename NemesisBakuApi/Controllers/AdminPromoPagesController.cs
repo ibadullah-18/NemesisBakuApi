@@ -39,7 +39,7 @@ public class AdminPromoPagesController : ControllerBase
 
         var usedSlots = await _context.PromoPages
             .IgnoreQueryFilters()
-            .Where(x => x.Type == dto.Type && !x.IsDeleted)
+            .Where(x => x.Type == dto.Type)
             .Select(x => x.SlotNumber)
             .ToListAsync();
 
@@ -60,14 +60,12 @@ public class AdminPromoPagesController : ControllerBase
 
         if (dto.File != null)
         {
-            imageUrl = await _fileService.UploadImageAsync(
-                dto.File,
-                "promo-pages");
+            imageUrl = await _fileService.UploadImageAsync(dto.File, "promo-pages");
         }
 
         var promoPage = new PromoPage
         {
-            Title = dto.Title,
+            Title = dto.Title.Trim(),
             Description = dto.Description,
             Type = dto.Type,
             SlotNumber = slot,
@@ -78,16 +76,21 @@ public class AdminPromoPagesController : ControllerBase
             IsActive = dto.IsActive
         };
 
-        if (dto.ProductIds.Any())
+        var productIds = dto.ProductIds
+            .Where(x => x != Guid.Empty)
+            .Distinct()
+            .ToList();
+
+        if (productIds.Any())
         {
             var validProductIds = await _context.Products
-                .Where(x => dto.ProductIds.Contains(x.Id))
+                .Where(x => productIds.Contains(x.Id))
                 .Select(x => x.Id)
                 .ToListAsync();
 
             var order = 0;
 
-            foreach (var productId in dto.ProductIds.Distinct())
+            foreach (var productId in productIds)
             {
                 if (!validProductIds.Contains(productId))
                     continue;
