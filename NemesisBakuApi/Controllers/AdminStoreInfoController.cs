@@ -18,28 +18,35 @@ public class AdminStoreInfoController : ControllerBase
     private readonly IFileService _fileService;
 
     public AdminStoreInfoController(
-    AppDbContext context,
-    IFileService fileService)
+        AppDbContext context,
+        IFileService fileService)
     {
         _context = context;
         _fileService = fileService;
     }
 
     [HttpPut]
-    public async Task<IActionResult> Update(StoreInfoUpdateDto dto)
+    [Consumes("multipart/form-data")]
+    public async Task<IActionResult> Update([FromForm] StoreInfoUpdateDto dto)
     {
         var store = await _context.StoreInfos.FirstOrDefaultAsync();
 
         if (store == null)
         {
             store = new StoreInfo();
-
             _context.StoreInfos.Add(store);
         }
 
         store.StoreName = dto.StoreName;
         store.Slogan = dto.Slogan;
-        store.LogoUrl = dto.LogoUrl;
+
+        if (dto.LogoFile != null)
+        {
+            if (!string.IsNullOrWhiteSpace(store.LogoUrl))
+                await _fileService.DeleteImageAsync(store.LogoUrl);
+
+            store.LogoUrl = await _fileService.UploadImageAsync(dto.LogoFile, "store");
+        }
 
         store.AboutTitle = dto.AboutTitle;
         store.AboutContent = dto.AboutContent;
@@ -79,34 +86,53 @@ public class AdminStoreInfoController : ControllerBase
 
         await _context.SaveChangesAsync();
 
-        return Ok(ApiResponse<string>.Ok("Store məlumatları yeniləndi"));
+        return Ok(ApiResponse<StoreInfoDto>.Ok(
+            ToDto(store),
+            "Store məlumatları yeniləndi"));
     }
 
-    [HttpPost("logo")]
-    public async Task<IActionResult> UploadLogo(IFormFile file)
+    private static StoreInfoDto ToDto(StoreInfo store)
     {
-        var store = await _context.StoreInfos.FirstOrDefaultAsync();
-
-        if (store == null)
+        return new StoreInfoDto
         {
-            store = new StoreInfo();
+            Id = store.Id,
+            StoreName = store.StoreName,
+            Slogan = store.Slogan,
+            LogoUrl = store.LogoUrl,
 
-            _context.StoreInfos.Add(store);
-        }
+            AboutTitle = store.AboutTitle,
+            AboutContent = store.AboutContent,
 
-        if (!string.IsNullOrWhiteSpace(store.LogoUrl))
-        {
-            await _fileService.DeleteImageAsync(store.LogoUrl);
-        }
+            MissionContent = store.MissionContent,
+            VisionContent = store.VisionContent,
+            WhyChooseUsContent = store.WhyChooseUsContent,
 
-        store.LogoUrl = await _fileService.UploadImageAsync(
-            file,
-            "store");
+            ReturnPolicyTitle = store.ReturnPolicyTitle,
+            ReturnPolicyContent = store.ReturnPolicyContent,
+            ExchangePolicyContent = store.ExchangePolicyContent,
+            ReturnExceptionsContent = store.ReturnExceptionsContent,
+            ReturnProcessContent = store.ReturnProcessContent,
 
-        await _context.SaveChangesAsync();
+            DeliveryTitle = store.DeliveryTitle,
+            DeliveryContent = store.DeliveryContent,
+            DeliveryBakuText = store.DeliveryBakuText,
+            DeliveryAbsheronSumgaitText = store.DeliveryAbsheronSumgaitText,
+            DeliveryRegionsText = store.DeliveryRegionsText,
+            PaymentAndCheckText = store.PaymentAndCheckText,
 
-        return Ok(ApiResponse<string>.Ok(
-            store.LogoUrl,
-            "Logo yeniləndi"));
+            PhoneNumber = store.PhoneNumber,
+            WhatsAppNumber = store.WhatsAppNumber,
+            Email = store.Email,
+
+            Address = store.Address,
+            Latitude = store.Latitude,
+            Longitude = store.Longitude,
+
+            WorkingHours = store.WorkingHours,
+
+            InstagramUrl = store.InstagramUrl,
+            TikTokUrl = store.TikTokUrl,
+            FacebookUrl = store.FacebookUrl
+        };
     }
 }

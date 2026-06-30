@@ -2,6 +2,7 @@
 using Microsoft.EntityFrameworkCore;
 using NemesisBakuApi.Data;
 using NemesisBakuApi.DTOs.Store;
+using NemesisBakuApi.Entities;
 using NemesisBakuApi.Helpers;
 
 namespace NemesisBakuApi.Controllers;
@@ -20,16 +21,19 @@ public class StoreInfoController : ControllerBase
     [HttpGet]
     public async Task<IActionResult> Get()
     {
-        var store = await _context.StoreInfos
-            .FirstOrDefaultAsync();
+        var store = await _context.StoreInfos.FirstOrDefaultAsync();
 
         if (store == null)
             return NotFound(ApiResponse<string>.Fail("Store məlumatı tapılmadı"));
 
-        var dto = new StoreInfoDto
+        return Ok(ApiResponse<StoreInfoDto>.Ok(ToDto(store)));
+    }
+
+    private static StoreInfoDto ToDto(StoreInfo store)
+    {
+        return new StoreInfoDto
         {
             Id = store.Id,
-
             StoreName = store.StoreName,
             Slogan = store.Slogan,
             LogoUrl = store.LogoUrl,
@@ -68,40 +72,5 @@ public class StoreInfoController : ControllerBase
             TikTokUrl = store.TikTokUrl,
             FacebookUrl = store.FacebookUrl
         };
-
-        return Ok(ApiResponse<StoreInfoDto>.Ok(dto));
-    }
-    [HttpPatch]
-    public async Task<IActionResult> Patch(StoreInfoPatchDto dto)
-    {
-        var store = await _context.StoreInfos.FirstOrDefaultAsync();
-
-        if (store == null)
-            return NotFound();
-
-        if (dto.StoreName != null)
-            store.StoreName = dto.StoreName;
-
-        if (dto.Slogan != null)
-            store.Slogan = dto.Slogan;
-
-        if (dto.WhatsAppNumber != null)
-            store.WhatsAppNumber = dto.WhatsAppNumber;
-
-        if (dto.PhoneNumber != null)
-            store.PhoneNumber = dto.PhoneNumber;
-
-        if (dto.Address != null)
-            store.Address = dto.Address;
-
-        if (dto.Latitude.HasValue)
-            store.Latitude = dto.Latitude;
-
-        if (dto.Longitude.HasValue)
-            store.Longitude = dto.Longitude;
-
-        await _context.SaveChangesAsync();
-
-        return Ok(ApiResponse<string>.Ok("Store məlumatları yeniləndi"));
     }
 }

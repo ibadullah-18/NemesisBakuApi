@@ -4,7 +4,8 @@ public class StoreInfoUpdateDto
 {
     public string StoreName { get; set; } = null!;
     public string? Slogan { get; set; }
-    public string? LogoUrl { get; set; }
+
+    public IFormFile? LogoFile { get; set; }
 
     public string? AboutTitle { get; set; }
     public string? AboutContent { get; set; }
