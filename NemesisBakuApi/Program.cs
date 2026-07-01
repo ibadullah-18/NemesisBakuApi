@@ -29,6 +29,9 @@ builder.Services.Configure<CloudinarySettings>(
 builder.Services.Configure<DeliverySettings>(
     builder.Configuration.GetSection("Delivery"));
 
+builder.Services.Configure<EmailSettings>(
+    builder.Configuration.GetSection("Email"));
+
 builder.Services.AddHttpClient();
 
 builder.Services.AddEndpointsApiExplorer();
@@ -93,6 +96,7 @@ builder.Services.AddScoped<IWhatsAppService, WhatsAppService>();
 builder.Services.AddScoped<IFileService, CloudinaryFileService>();
 builder.Services.AddValidatorsFromAssemblyContaining<ProductCreateDtoValidator>();
 builder.Services.AddScoped<IAuditLogService, AuditLogService>();
+builder.Services.AddScoped<IEmailService, EmailService>();
 #endregion
 
 

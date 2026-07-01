@@ -14,6 +14,9 @@ public class AppUser : IdentityUser<Guid>
     public bool IsActive { get; set; } = true;
     public bool IsDeleted { get; set; } = false;
 
+    public bool TermsAccepted { get; set; } = false;
+    public DateTime? TermsAcceptedAt { get; set; }
+
     public DateTime? LastLoginAt { get; set; }
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
     public DateTime? UpdatedAt { get; set; }

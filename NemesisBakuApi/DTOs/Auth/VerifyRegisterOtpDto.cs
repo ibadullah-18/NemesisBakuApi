@@ -14,5 +14,7 @@ public class VerifyRegisterOtpDto
 
     public string Code { get; set; } = null!;
 
+    public bool TermsAccepted { get; set; }
+
     public IFormFile? ProfileImage { get; set; }
 }

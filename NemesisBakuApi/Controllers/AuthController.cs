@@ -18,7 +18,7 @@ public class AuthController : ControllerBase
     private readonly SignInManager<AppUser> _signInManager;
     private readonly JwtTokenGenerator _jwtTokenGenerator;
     private readonly AppDbContext _context;
-    private readonly IWhatsAppService _whatsAppService;
+    private readonly IEmailService _emailService;
     private readonly IFileService _fileService;
 
     public AuthController(
@@ -26,44 +26,38 @@ public class AuthController : ControllerBase
         SignInManager<AppUser> signInManager,
         JwtTokenGenerator jwtTokenGenerator,
         AppDbContext context,
-        IWhatsAppService whatsAppService,
+        IEmailService emailService,
         IFileService fileService)
     {
         _userManager = userManager;
         _signInManager = signInManager;
         _jwtTokenGenerator = jwtTokenGenerator;
         _context = context;
-        _whatsAppService = whatsAppService;
+        _emailService = emailService;
         _fileService = fileService;
     }
-
 
     [HttpPost("login")]
     public async Task<IActionResult> Login(LoginDto dto)
     {
-        var user = await _userManager.FindByNameAsync(dto.PhoneNumber);
+        var login = dto.EmailOrPhoneNumber.Trim();
+
+        AppUser? user = login.Contains("@")
+            ? await _userManager.FindByEmailAsync(login)
+            : await _userManager.FindByNameAsync(login);
 
         if (user == null)
-        {
-            return Unauthorized(ApiResponse<string>.Fail("Nömrə və ya şifrə yanlışdır"));
-        }
-        if (!user.IsActive || user.IsDeleted)
-        {
-            return Unauthorized(ApiResponse<string>.Fail("Hesab aktiv deyil"));
-        }
+            return Unauthorized(ApiResponse<string>.Fail("Email/nömrə və ya şifrə yanlışdır"));
 
-        var result = await _signInManager.CheckPasswordSignInAsync(
-            user,
-            dto.Password,
-            false);
+        if (!user.IsActive || user.IsDeleted)
+            return Unauthorized(ApiResponse<string>.Fail("Hesab aktiv deyil"));
+
+        var result = await _signInManager.CheckPasswordSignInAsync(user, dto.Password, false);
 
         if (!result.Succeeded)
-        {
-            return Unauthorized(ApiResponse<string>.Fail("Nömrə və ya şifrə yanlışdır"));
-        }
+            return Unauthorized(ApiResponse<string>.Fail("Email/nömrə və ya şifrə yanlışdır"));
 
         user.LastLoginAt = DateTime.UtcNow;
-
         await _userManager.UpdateAsync(user);
 
         var accessToken = await _jwtTokenGenerator.GenerateTokenAsync(user);
@@ -97,18 +91,18 @@ public class AuthController : ControllerBase
     [HttpPost("send-register-otp")]
     public async Task<IActionResult> SendRegisterOtp(SendOtpDto dto)
     {
-        var existingUser = await _userManager.FindByNameAsync(dto.PhoneNumber);
+        var email = dto.Email.Trim();
+
+        var existingUser = await _userManager.FindByEmailAsync(email);
 
         if (existingUser != null)
-        {
-            return BadRequest(ApiResponse<string>.Fail("Bu nömrə artıq qeydiyyatdan keçib"));
-        }
+            return BadRequest(ApiResponse<string>.Fail("Bu email artıq qeydiyyatdan keçib"));
 
         var code = new Random().Next(100000, 999999).ToString();
 
         var otp = new UserOtpCode
         {
-            PhoneNumber = dto.PhoneNumber,
+            Email = email,
             Code = code,
             Purpose = OtpPurpose.Register,
             ExpiresAt = DateTime.UtcNow.AddMinutes(5)
@@ -117,35 +111,37 @@ public class AuthController : ControllerBase
         _context.UserOtpCodes.Add(otp);
         await _context.SaveChangesAsync();
 
-        var sent = await _whatsAppService.SendOtpAsync(dto.PhoneNumber, code);
+        var sent = await _emailService.SendOtpAsync(email, code);
 
         if (!sent)
-        {
-            return BadRequest(ApiResponse<string>.Fail("WhatsApp kodu göndərilmədi"));
-        }
+            return BadRequest(ApiResponse<string>.Fail("Email təsdiq kodu göndərilmədi"));
 
-        return Ok(ApiResponse<string>.Ok("Təsdiq kodu WhatsApp-a göndərildi"));
+        return Ok(ApiResponse<string>.Ok("Təsdiq kodu emailə göndərildi"));
     }
 
     [HttpPost("verify-register-otp")]
     [Consumes("multipart/form-data")]
     public async Task<IActionResult> VerifyRegisterOtp([FromForm] VerifyRegisterOtpDto dto)
     {
+        if (!dto.TermsAccepted)
+            return BadRequest(ApiResponse<string>.Fail("İstifadə şərtlərini qəbul etməlisiniz"));
+
         if (dto.Password != dto.ConfirmPassword)
-        {
             return BadRequest(ApiResponse<string>.Fail("Şifrələr uyğun deyil"));
-        }
 
-        var existingUser = await _userManager.FindByNameAsync(dto.PhoneNumber);
+        var existingPhone = await _userManager.FindByNameAsync(dto.PhoneNumber);
 
-        if (existingUser != null)
-        {
+        if (existingPhone != null)
             return BadRequest(ApiResponse<string>.Fail("Bu nömrə artıq qeydiyyatdan keçib"));
-        }
+
+        var existingEmail = await _userManager.FindByEmailAsync(dto.Email);
+
+        if (existingEmail != null)
+            return BadRequest(ApiResponse<string>.Fail("Bu email artıq qeydiyyatdan keçib"));
 
         var otp = await _context.UserOtpCodes
             .Where(x =>
-                x.PhoneNumber == dto.PhoneNumber &&
+                x.Email == dto.Email &&
                 x.Code == dto.Code &&
                 x.Purpose == OtpPurpose.Register &&
                 !x.IsUsed &&
@@ -154,9 +150,7 @@ public class AuthController : ControllerBase
             .FirstOrDefaultAsync();
 
         if (otp == null)
-        {
             return BadRequest(ApiResponse<string>.Fail("Təsdiq kodu yanlışdır və ya vaxtı bitib"));
-        }
 
         string? profileImageUrl = null;
 
@@ -176,6 +170,8 @@ public class AuthController : ControllerBase
             DateOfBirth = dto.DateOfBirth,
             LoyaltyCardCode = dto.LoyaltyCardCode,
             ProfileImageUrl = profileImageUrl,
+            TermsAccepted = true,
+            TermsAcceptedAt = DateTime.UtcNow,
             IsActive = true
         };
 
@@ -184,9 +180,7 @@ public class AuthController : ControllerBase
         if (!result.Succeeded)
         {
             if (!string.IsNullOrWhiteSpace(profileImageUrl))
-            {
                 await _fileService.DeleteImageAsync(profileImageUrl);
-            }
 
             return BadRequest(result.Errors);
         }
@@ -198,24 +192,26 @@ public class AuthController : ControllerBase
 
         await _context.SaveChangesAsync();
 
+        await _emailService.SendWelcomeAsync(dto.Email, dto.FullName);
+
         return Ok(ApiResponse<string>.Ok("Qeydiyyat uğurla tamamlandı"));
     }
 
     [HttpPost("send-forgot-password-otp")]
     public async Task<IActionResult> SendForgotPasswordOtp(SendOtpDto dto)
     {
-        var user = await _userManager.FindByNameAsync(dto.PhoneNumber);
+        var email = dto.Email.Trim();
+
+        var user = await _userManager.FindByEmailAsync(email);
 
         if (user == null)
-        {
-            return BadRequest(ApiResponse<string>.Fail("Bu nömrəli istifadəçi tapılmadı"));
-        }
+            return BadRequest(ApiResponse<string>.Fail("Bu email ilə istifadəçi tapılmadı"));
 
         var code = new Random().Next(100000, 999999).ToString();
 
         var otp = new UserOtpCode
         {
-            PhoneNumber = dto.PhoneNumber,
+            Email = email,
             Code = code,
             Purpose = OtpPurpose.ForgotPassword,
             ExpiresAt = DateTime.UtcNow.AddMinutes(5)
@@ -224,34 +220,30 @@ public class AuthController : ControllerBase
         _context.UserOtpCodes.Add(otp);
         await _context.SaveChangesAsync();
 
-        var sent = await _whatsAppService.SendOtpAsync(dto.PhoneNumber, code);
+        var sent = await _emailService.SendOtpAsync(email, code);
 
         if (!sent)
-        {
-            return BadRequest(ApiResponse<string>.Fail("WhatsApp kodu göndərilmədi"));
-        }
+            return BadRequest(ApiResponse<string>.Fail("Email təsdiq kodu göndərilmədi"));
 
-        return Ok(ApiResponse<string>.Ok("Şifrə yeniləmə kodu WhatsApp-a göndərildi"));
+        return Ok(ApiResponse<string>.Ok("Şifrə yeniləmə kodu emailə göndərildi"));
     }
 
     [HttpPost("reset-password-with-otp")]
     public async Task<IActionResult> ResetPasswordWithOtp(ResetPasswordWithOtpDto dto)
     {
         if (dto.NewPassword != dto.ConfirmNewPassword)
-        {
             return BadRequest(ApiResponse<string>.Fail("Şifrələr uyğun deyil"));
-        }
 
-        var user = await _userManager.FindByNameAsync(dto.PhoneNumber);
+        var email = dto.Email.Trim();
+
+        var user = await _userManager.FindByEmailAsync(email);
 
         if (user == null)
-        {
-            return BadRequest(ApiResponse<string>.Fail("Bu nömrəli istifadəçi tapılmadı"));
-        }
+            return BadRequest(ApiResponse<string>.Fail("Bu email ilə istifadəçi tapılmadı"));
 
         var otp = await _context.UserOtpCodes
             .Where(x =>
-                x.PhoneNumber == dto.PhoneNumber &&
+                x.Email == email &&
                 x.Code == dto.Code &&
                 x.Purpose == OtpPurpose.ForgotPassword &&
                 !x.IsUsed &&
@@ -260,9 +252,7 @@ public class AuthController : ControllerBase
             .FirstOrDefaultAsync();
 
         if (otp == null)
-        {
             return BadRequest(ApiResponse<string>.Fail("Təsdiq kodu yanlışdır və ya vaxtı bitib"));
-        }
 
         var resetToken = await _userManager.GeneratePasswordResetTokenAsync(user);
 
@@ -272,9 +262,7 @@ public class AuthController : ControllerBase
             dto.NewPassword);
 
         if (!result.Succeeded)
-        {
             return BadRequest(result.Errors);
-        }
 
         otp.IsUsed = true;
         otp.UsedAt = DateTime.UtcNow;
@@ -296,9 +284,7 @@ public class AuthController : ControllerBase
                 x.ExpiresAt > DateTime.UtcNow);
 
         if (refreshToken == null)
-        {
             return Unauthorized(ApiResponse<string>.Fail("Refresh token yanlışdır və ya vaxtı bitib"));
-        }
 
         refreshToken.IsUsed = true;
         refreshToken.UsedAt = DateTime.UtcNow;
@@ -333,6 +319,4 @@ public class AuthController : ControllerBase
 
         return Ok(ApiResponse<AuthResponseDto>.Ok(response));
     }
-
-
 }
