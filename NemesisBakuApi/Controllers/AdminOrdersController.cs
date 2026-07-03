@@ -1,4 +1,5 @@
-﻿using Microsoft.AspNetCore.Authorization;
+﻿using System.Security.Claims;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using NemesisBakuApi.Data;
@@ -7,7 +8,6 @@ using NemesisBakuApi.Entities;
 using NemesisBakuApi.Enums;
 using NemesisBakuApi.Helpers;
 using NemesisBakuApi.Services.Interfaces;
-using System.Security.Claims;
 
 namespace NemesisBakuApi.Controllers;
 
@@ -15,20 +15,19 @@ namespace NemesisBakuApi.Controllers;
 [Route("api/[controller]")]
 [Authorize(Roles = "SuperAdmin,Admin")]
 public class AdminOrdersController : ControllerBase
-
 {
     private readonly AppDbContext _context;
     private readonly IAuditLogService _auditLogService;
-    private readonly IWhatsAppService _whatsAppService;
+    private readonly IEmailService _emailService;
 
     public AdminOrdersController(
         AppDbContext context,
         IAuditLogService auditLogService,
-        IWhatsAppService whatsAppService)
+        IEmailService emailService)
     {
         _context = context;
         _auditLogService = auditLogService;
-        _whatsAppService = whatsAppService;
+        _emailService = emailService;
     }
 
     private Guid GetUserId()
@@ -48,21 +47,14 @@ public class AdminOrdersController : ControllerBase
         [FromQuery] int page = 1,
         [FromQuery] int pageSize = 20)
     {
-        if (page <= 0)
-            page = 1;
-
-        if (pageSize <= 0)
-            pageSize = 20;
-
-        if (pageSize > 100)
-            pageSize = 100;
+        if (page <= 0) page = 1;
+        if (pageSize <= 0) pageSize = 20;
+        if (pageSize > 100) pageSize = 100;
 
         var query = _context.Orders.AsQueryable();
 
         if (status.HasValue)
-        {
             query = query.Where(x => x.Status == status.Value);
-        }
 
         if (!string.IsNullOrWhiteSpace(search))
         {
@@ -84,18 +76,13 @@ public class AdminOrdersController : ControllerBase
             {
                 Id = x.Id,
                 OrderNumber = x.OrderNumber,
-
                 CustomerFullName = x.CustomerFullName,
                 CustomerPhoneNumber = x.CustomerPhoneNumber,
-
                 TotalPrice = x.TotalPrice,
-
                 DeliveryType = x.DeliveryType,
                 PaymentMethod = x.PaymentMethod,
                 Status = x.Status,
-
                 IsWhatsappMessageSent = x.IsWhatsappMessageSent,
-
                 CreatedAt = x.CreatedAt
             })
             .ToListAsync();
@@ -116,6 +103,7 @@ public class AdminOrdersController : ControllerBase
     public async Task<IActionResult> GetOrderDetail(Guid id)
     {
         var order = await _context.Orders
+            .Include(x => x.User)
             .Include(x => x.Items)
             .Include(x => x.StatusHistories)
                 .ThenInclude(h => h.ChangedByUser)
@@ -139,10 +127,15 @@ public class AdminOrdersController : ControllerBase
             Latitude = order.Latitude,
             Longitude = order.Longitude,
 
+            BuildingNumber = order.BuildingNumber,
+            Floor = order.Floor,
+            Apartment = order.Apartment,
+
             DeliveryDate = order.DeliveryDate,
             DeliveryTimeRange = order.DeliveryTimeRange,
 
             DeliveryPrice = order.DeliveryPrice,
+            DeliveryDistanceKm = order.DeliveryDistanceKm,
             Note = order.Note,
 
             TotalProductPrice = order.TotalProductPrice,
@@ -160,17 +153,13 @@ public class AdminOrdersController : ControllerBase
             {
                 ProductId = x.ProductId,
                 ProductVariantId = x.ProductVariantId,
-
                 ProductName = x.ProductName,
                 ProductCode = x.ProductCode,
-
                 SizeValue = x.SizeValue,
                 ColorName = x.ColorName,
-
                 UnitPrice = x.UnitPrice,
                 Quantity = x.Quantity,
                 TotalPrice = x.TotalPrice,
-
                 ProductImageUrl = x.ProductImageUrl,
                 ProductLink = x.ProductLink
             }).ToList()
@@ -185,6 +174,7 @@ public class AdminOrdersController : ControllerBase
         var adminId = GetUserId();
 
         var order = await _context.Orders
+            .Include(x => x.User)
             .Include(x => x.Items)
             .FirstOrDefaultAsync(x => x.Id == id);
 
@@ -216,17 +206,78 @@ public class AdminOrdersController : ControllerBase
             order.Id.ToString(),
             $"Sifariş statusu dəyişdirildi: {oldStatus} → {dto.NewStatus}. OrderNumber: {order.OrderNumber}");
 
-        await SendOrderStatusWhatsAppMessageAsync(order, dto.NewStatus);
-
+        if (order.User != null && !string.IsNullOrWhiteSpace(order.User.Email))
+        {
+            await _emailService.SendOrderStatusAsync(
+                order.User.Email,
+                order.CustomerFullName,
+                order.OrderNumber,
+                order.Status,
+                order.TotalPrice);
+        }
 
         return Ok(ApiResponse<string>.Ok("Sifariş statusu yeniləndi"));
     }
 
+    [HttpGet("{id}/status-whatsapp-link")]
+    public async Task<IActionResult> GetStatusWhatsAppLink(Guid id, [FromQuery] OrderStatus status)
+    {
+        var order = await _context.Orders
+            .Include(x => x.Items)
+            .FirstOrDefaultAsync(x => x.Id == id);
+
+        if (order == null)
+            return NotFound(ApiResponse<string>.Fail("Sifariş tapılmadı"));
+
+        if (string.IsNullOrWhiteSpace(order.CustomerPhoneNumber))
+            return BadRequest(ApiResponse<string>.Fail("Müştərinin telefon nömrəsi yoxdur"));
+
+        var message = BuildOrderStatusMessage(order, status);
+
+        if (string.IsNullOrWhiteSpace(message))
+            return BadRequest(ApiResponse<string>.Fail("Bu status üçün WhatsApp mesajı yoxdur"));
+
+        var phone = NormalizePhone(order.CustomerPhoneNumber);
+        var encodedMessage = Uri.EscapeDataString(message);
+        var url = $"https://wa.me/{phone}?text={encodedMessage}";
+
+        return Ok(ApiResponse<WhatsAppManualLinkDto>.Ok(new WhatsAppManualLinkDto
+        {
+            Url = url,
+            Message = message
+        }));
+    }
+
+    [HttpGet("{id}/courier-whatsapp-link")]
+    public async Task<IActionResult> GetCourierWhatsAppLink(Guid id, [FromQuery] string courierPhoneNumber)
+    {
+        var order = await _context.Orders
+            .Include(x => x.Items)
+            .FirstOrDefaultAsync(x => x.Id == id);
+
+        if (order == null)
+            return NotFound(ApiResponse<string>.Fail("Sifariş tapılmadı"));
+
+        if (string.IsNullOrWhiteSpace(courierPhoneNumber))
+            return BadRequest(ApiResponse<string>.Fail("Kuryer nömrəsi daxil edilməlidir"));
+
+        var message = BuildCourierMessage(order);
+        var phone = NormalizePhone(courierPhoneNumber);
+        var encodedMessage = Uri.EscapeDataString(message);
+        var url = $"https://wa.me/{phone}?text={encodedMessage}";
+
+        return Ok(ApiResponse<WhatsAppManualLinkDto>.Ok(new WhatsAppManualLinkDto
+        {
+            Url = url,
+            Message = message
+        }));
+    }
+
     private async Task WriteAuditLogAsync(
-    string action,
-    string entityName,
-    string? entityId,
-    string? description)
+        string action,
+        string entityName,
+        string? entityId,
+        string? description)
     {
         await _auditLogService.CreateAsync(
             GetUserId(),
@@ -238,19 +289,14 @@ public class AdminOrdersController : ControllerBase
             Request.Headers.UserAgent.ToString());
     }
 
-    private async Task SendOrderStatusWhatsAppMessageAsync(Order order, OrderStatus newStatus)
+    private static string BuildOrderStatusMessage(Order order, OrderStatus status)
     {
-        if (string.IsNullOrWhiteSpace(order.CustomerPhoneNumber))
-            return;
-
-        string? message = null;
-
-        if (newStatus == OrderStatus.Confirmed)
+        if (status == OrderStatus.Confirmed)
         {
-            message =
+            return
 $@"Salam {order.CustomerFullName}
 
-Sifarişiniz qəbul olundu və hazırlanır.
+Sifarişiniz qəbul olundu.
 
 Sifariş nömrəsi:
 {order.OrderNumber}
@@ -258,10 +304,26 @@ Sifariş nömrəsi:
 Yekun məbləğ:
 {order.TotalPrice} AZN
 
-NemesisBaku";
+nemesisbaku";
         }
 
-        if (newStatus == OrderStatus.OnDelivery)
+        if (status == OrderStatus.Preparing)
+        {
+            return
+$@"Salam {order.CustomerFullName}
+
+Sifarişiniz hazırlanır.
+
+Sifariş nömrəsi:
+{order.OrderNumber}
+
+Yekun məbləğ:
+{order.TotalPrice} AZN
+
+nemesisbaku";
+        }
+
+        if (status == OrderStatus.OnDelivery)
         {
             var estimatedMinutes = Math.Max(
                 20,
@@ -269,10 +331,10 @@ NemesisBaku";
 
             var productsText = string.Join(", ", order.Items.Select(x => x.ProductName));
 
-            message =
-    $@"Salam {order.CustomerFullName}
+            return
+$@"Salam {order.CustomerFullName}
 
-Sifarişiniz dağıtıma çıxıb.
+Sifarişiniz çatdırılmaya çıxdı.
 
 Sifariş nömrəsi:
 {order.OrderNumber}
@@ -292,24 +354,116 @@ Məsafə:
 Təxmini çatdırılma:
 {estimatedMinutes} dəqiqə
 
-NemesisBaku";
+nemesisbaku";
         }
 
-        if (newStatus == OrderStatus.Delivered)
+        if (status == OrderStatus.Delivered)
         {
-            message =
-    $@"Salam {order.CustomerFullName}
+            return
+$@"Salam {order.CustomerFullName}
 
 Sifarişiniz uğurla təhvil verildi.
 
-NemesisBaku seçdiyiniz üçün təşəkkür edirik.";
+nemesisbaku seçdiyiniz üçün təşəkkür edirik.";
         }
 
-        if (!string.IsNullOrWhiteSpace(message))
+        if (status == OrderStatus.Cancelled)
         {
-            await _whatsAppService.SendTextMessageAsync(
-                order.CustomerPhoneNumber,
-                message);
+            return
+$@"Salam {order.CustomerFullName}
+
+Sifarişiniz ləğv edildi.
+
+Sifariş nömrəsi:
+{order.OrderNumber}
+
+Əlavə məlumat üçün bizimlə əlaqə saxlaya bilərsiniz.
+
+nemesisbaku";
         }
+
+        if (status == OrderStatus.Rejected)
+        {
+            return
+$@"Salam {order.CustomerFullName}
+
+Sifarişiniz rədd edildi.
+
+Sifariş nömrəsi:
+{order.OrderNumber}
+
+Əlavə məlumat üçün bizimlə əlaqə saxlaya bilərsiniz.
+
+nemesisbaku";
+        }
+
+        return "";
+    }
+
+    private static string BuildCourierMessage(Order order)
+    {
+        var mapLink = order.Latitude.HasValue && order.Longitude.HasValue
+            ? $"https://www.google.com/maps?q={order.Latitude},{order.Longitude}"
+            : "Konum yoxdur";
+
+        var productsText = string.Join("\n", order.Items.Select(x =>
+            $"- {x.ProductName} | {x.SizeValue} | {x.ColorName} | {x.Quantity} ədəd"));
+
+        return
+$@"Yeni çatdırılma
+
+Sifariş nömrəsi:
+{order.OrderNumber}
+
+Müştəri:
+{order.CustomerFullName}
+
+Telefon:
+{order.CustomerPhoneNumber}
+
+Ünvan:
+{order.AddressText}
+
+Bina/Blok:
+{order.BuildingNumber}
+
+Mərtəbə:
+{order.Floor}
+
+Mənzil:
+{order.Apartment}
+
+Qeyd:
+{order.Note}
+
+Məhsullar:
+{productsText}
+
+Məhsulların cəmi:
+{order.TotalProductPrice} AZN
+
+Çatdırılma:
+{order.DeliveryPrice} AZN
+
+Yekun alınacaq məbləğ:
+{order.TotalPrice} AZN
+
+Məsafə:
+{order.DeliveryDistanceKm} km
+
+Xəritə:
+{mapLink}
+
+nemesisbaku";
+    }
+
+    private static string NormalizePhone(string phone)
+    {
+        return phone
+            .Replace("+", "")
+            .Replace(" ", "")
+            .Replace("(", "")
+            .Replace(")", "")
+            .Replace("-", "");
     }
 }

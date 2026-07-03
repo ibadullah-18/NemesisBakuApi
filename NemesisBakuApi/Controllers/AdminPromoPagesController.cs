@@ -1,4 +1,5 @@
-﻿using Microsoft.AspNetCore.Authorization;
+﻿using System.Security.Claims;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using NemesisBakuApi.Data;
@@ -12,16 +13,28 @@ namespace NemesisBakuApi.Controllers;
 
 [ApiController]
 [Route("api/[controller]")]
-[Authorize(Roles = "SuperAdmin")]
+[Authorize(Roles = "SuperAdmin,Admin")]
 public class AdminPromoPagesController : ControllerBase
 {
     private readonly AppDbContext _context;
     private readonly IFileService _fileService;
+    private readonly IAuditLogService _auditLogService;
 
-    public AdminPromoPagesController(AppDbContext context, IFileService fileService)
+    public AdminPromoPagesController(
+        AppDbContext context,
+        IFileService fileService,
+        IAuditLogService auditLogService)
     {
         _context = context;
         _fileService = fileService;
+        _auditLogService = auditLogService;
+    }
+
+    private Guid GetUserId()
+    {
+        var userId = User.FindFirstValue(ClaimTypes.NameIdentifier);
+        if (string.IsNullOrWhiteSpace(userId)) throw new UnauthorizedAccessException();
+        return Guid.Parse(userId);
     }
 
     [HttpPost]
@@ -43,8 +56,7 @@ public class AdminPromoPagesController : ControllerBase
             .Select(x => x.SlotNumber)
             .ToListAsync();
 
-        var slot = Enumerable.Range(1, 5)
-            .FirstOrDefault(x => !usedSlots.Contains(x));
+        var slot = Enumerable.Range(1, 5).FirstOrDefault(x => !usedSlots.Contains(x));
 
         if (slot == 0)
             return BadRequest(ApiResponse<string>.Fail(
@@ -59,9 +71,7 @@ public class AdminPromoPagesController : ControllerBase
         string? imageUrl = null;
 
         if (dto.File != null)
-        {
             imageUrl = await _fileService.UploadImageAsync(dto.File, "promo-pages");
-        }
 
         var promoPage = new PromoPage
         {
@@ -105,6 +115,12 @@ public class AdminPromoPagesController : ControllerBase
 
         _context.PromoPages.Add(promoPage);
         await _context.SaveChangesAsync();
+
+        await WriteAuditLogAsync(
+            "Create",
+            "PromoPage",
+            promoPage.Id.ToString(),
+            $"Promo səhifə yaradıldı: {promoPage.Title}, Type: {promoPage.Type}, Slug: {promoPage.Slug}, ProductCount: {productIds.Count}");
 
         return Ok(ApiResponse<Guid>.Ok(promoPage.Id, "Promo səhifə yaradıldı"));
     }
@@ -161,23 +177,28 @@ public class AdminPromoPagesController : ControllerBase
         if (dto.StartDate >= dto.EndDate)
             return BadRequest(ApiResponse<string>.Fail("Başlama tarixi bitmə tarixindən əvvəl olmalıdır"));
 
-        promoPage.Title = dto.Title;
+        var oldTitle = promoPage.Title;
+        var oldActive = promoPage.IsActive;
+        var oldStart = promoPage.StartDate;
+        var oldEnd = promoPage.EndDate;
+        var oldProductCount = promoPage.Products.Count(x => !x.IsDeleted);
+
+        promoPage.Title = dto.Title.Trim();
         promoPage.Description = dto.Description;
         promoPage.StartDate = dto.StartDate;
         promoPage.EndDate = dto.EndDate;
         promoPage.IsActive = dto.IsActive;
         promoPage.UpdatedAt = DateTime.UtcNow;
 
+        var imageChanged = false;
+
         if (dto.File != null)
         {
             if (!string.IsNullOrWhiteSpace(promoPage.ImageUrl))
-            {
                 await _fileService.DeleteImageAsync(promoPage.ImageUrl);
-            }
 
-            promoPage.ImageUrl = await _fileService.UploadImageAsync(
-                dto.File,
-                "promo-pages");
+            promoPage.ImageUrl = await _fileService.UploadImageAsync(dto.File, "promo-pages");
+            imageChanged = true;
         }
 
         foreach (var oldProduct in promoPage.Products)
@@ -186,16 +207,21 @@ public class AdminPromoPagesController : ControllerBase
             oldProduct.UpdatedAt = DateTime.UtcNow;
         }
 
-        if (dto.ProductIds.Any())
+        var productIds = dto.ProductIds
+            .Where(x => x != Guid.Empty)
+            .Distinct()
+            .ToList();
+
+        if (productIds.Any())
         {
             var validProductIds = await _context.Products
-                .Where(x => dto.ProductIds.Contains(x.Id))
+                .Where(x => productIds.Contains(x.Id))
                 .Select(x => x.Id)
                 .ToListAsync();
 
             var order = 0;
 
-            foreach (var productId in dto.ProductIds.Distinct())
+            foreach (var productId in productIds)
             {
                 if (!validProductIds.Contains(productId))
                     continue;
@@ -209,6 +235,12 @@ public class AdminPromoPagesController : ControllerBase
         }
 
         await _context.SaveChangesAsync();
+
+        await WriteAuditLogAsync(
+            "Update",
+            "PromoPage",
+            promoPage.Id.ToString(),
+            $"Promo səhifə yeniləndi: {oldTitle} → {promoPage.Title}. Active: {oldActive} → {promoPage.IsActive}. Date: {oldStart} - {oldEnd} → {promoPage.StartDate} - {promoPage.EndDate}. ProductCount: {oldProductCount} → {productIds.Count}. ImageChanged: {imageChanged}");
 
         return Ok(ApiResponse<string>.Ok("Promo səhifə yeniləndi"));
     }
@@ -235,13 +267,19 @@ public class AdminPromoPagesController : ControllerBase
 
         await _context.SaveChangesAsync();
 
+        await WriteAuditLogAsync(
+            "Delete",
+            "PromoPage",
+            promoPage.Id.ToString(),
+            $"Promo səhifə silindi: {promoPage.Title}, Type: {promoPage.Type}, Slug: {promoPage.Slug}");
+
         return Ok(ApiResponse<string>.Ok("Promo səhifə silindi"));
     }
 
     [HttpGet("active")]
     public async Task<IActionResult> GetActive([FromQuery] PromoPageType? type)
     {
-        var now = DateTime.UtcNow;
+        var now = DateTime.Now;
 
         var query = _context.PromoPages
             .Where(x =>
@@ -250,9 +288,7 @@ public class AdminPromoPagesController : ControllerBase
                 x.EndDate >= now);
 
         if (type.HasValue)
-        {
             query = query.Where(x => x.Type == type.Value);
-        }
 
         var items = await query
             .OrderBy(x => x.Type)
@@ -272,5 +308,17 @@ public class AdminPromoPagesController : ControllerBase
             .ToListAsync();
 
         return Ok(ApiResponse<object>.Ok(items));
+    }
+
+    private async Task WriteAuditLogAsync(string action, string entityName, string? entityId, string? description)
+    {
+        await _auditLogService.CreateAsync(
+            GetUserId(),
+            action,
+            entityName,
+            entityId,
+            description,
+            HttpContext.Connection.RemoteIpAddress?.ToString(),
+            Request.Headers.UserAgent.ToString());
     }
 }

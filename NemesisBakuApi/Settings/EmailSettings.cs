@@ -2,13 +2,12 @@
 
 public class EmailSettings
 {
-    public string Host { get; set; } = null!;
-    public int Port { get; set; }
-    public bool EnableSsl { get; set; } = true;
+    public string SiteUrl { get; set; } = "https://nemesisbaku.az";
+    public string LogoUrl { get; set; } = null!;
 
-    public string FromEmail { get; set; } = null!;
-    public string FromName { get; set; } = "nemesisbaku";
+    public string InstagramUrl { get; set; } = null!;
+    public string TikTokUrl { get; set; } = null!;
+    public string WhatsAppUrl { get; set; } = null!;
 
-    public string Username { get; set; } = null!;
-    public string Password { get; set; } = null!;
+    public List<EmailAccountSettings> Accounts { get; set; } = new();
 }

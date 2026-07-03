@@ -22,6 +22,11 @@ public class AdminAuditLogsController : ControllerBase
     [HttpGet]
     public async Task<IActionResult> GetLogs(
         [FromQuery] string? search,
+        [FromQuery] string? action,
+        [FromQuery] string? entityName,
+        [FromQuery] Guid? userId,
+        [FromQuery] DateTime? fromDate,
+        [FromQuery] DateTime? toDate,
         [FromQuery] int page = 1,
         [FromQuery] int pageSize = 20)
     {
@@ -40,8 +45,38 @@ public class AdminAuditLogsController : ControllerBase
             query = query.Where(x =>
                 x.Action.ToLower().Contains(s) ||
                 x.EntityName.ToLower().Contains(s) ||
+                (x.EntityId != null && x.EntityId.ToLower().Contains(s)) ||
                 (x.Description != null && x.Description.ToLower().Contains(s)) ||
+                (x.IpAddress != null && x.IpAddress.ToLower().Contains(s)) ||
+                (x.UserAgent != null && x.UserAgent.ToLower().Contains(s)) ||
                 (x.User != null && x.User.FullName.ToLower().Contains(s)));
+        }
+
+        if (!string.IsNullOrWhiteSpace(action))
+        {
+            var a = action.Trim().ToLower();
+            query = query.Where(x => x.Action.ToLower() == a);
+        }
+
+        if (!string.IsNullOrWhiteSpace(entityName))
+        {
+            var e = entityName.Trim().ToLower();
+            query = query.Where(x => x.EntityName.ToLower() == e);
+        }
+
+        if (userId.HasValue)
+        {
+            query = query.Where(x => x.UserId == userId.Value);
+        }
+
+        if (fromDate.HasValue)
+        {
+            query = query.Where(x => x.CreatedAt >= fromDate.Value);
+        }
+
+        if (toDate.HasValue)
+        {
+            query = query.Where(x => x.CreatedAt <= toDate.Value);
         }
 
         var totalCount = await query.CountAsync();

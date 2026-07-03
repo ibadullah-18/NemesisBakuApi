@@ -51,6 +51,10 @@ public class AppDbContext : IdentityDbContext<AppUser, IdentityRole<Guid>, Guid>
     public DbSet<HomeSection> HomeSections { get; set; }
     public DbSet<HomeSectionProduct> HomeSectionProducts { get; set; }
 
+    public DbSet<EmailAnnouncement> EmailAnnouncements { get; set; }
+    public DbSet<BasketLowStockEmailLog> BasketLowStockEmailLogs { get; set; }
+    public DbSet<CourierPhone> CourierPhones { get; set; }
+
     protected override void OnModelCreating(ModelBuilder builder)
     {
         base.OnModelCreating(builder);
@@ -256,6 +260,19 @@ public class AppDbContext : IdentityDbContext<AppUser, IdentityRole<Guid>, Guid>
             .HasQueryFilter(x => !x.IsDeleted);
 
         builder.Entity<HomeSectionProduct>()
+            .HasQueryFilter(x => !x.IsDeleted);
+
+        builder.Entity<EmailAnnouncement>()
+            .HasQueryFilter(x => !x.IsDeleted);
+
+        builder.Entity<BasketLowStockEmailLog>()
+            .HasIndex(x => new { x.UserId, x.ProductVariantId })
+            .IsUnique();
+
+        builder.Entity<BasketLowStockEmailLog>()
+            .HasQueryFilter(x => !x.IsDeleted);
+
+        builder.Entity<CourierPhone>()
             .HasQueryFilter(x => !x.IsDeleted);
     }
 }

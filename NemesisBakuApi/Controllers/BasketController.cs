@@ -6,6 +6,7 @@ using NemesisBakuApi.Data;
 using NemesisBakuApi.DTOs.Basket;
 using NemesisBakuApi.Entities;
 using NemesisBakuApi.Helpers;
+using NemesisBakuApi.Services.Interfaces;
 
 namespace NemesisBakuApi.Controllers;
 
@@ -15,10 +16,14 @@ namespace NemesisBakuApi.Controllers;
 public class BasketController : ControllerBase
 {
     private readonly AppDbContext _context;
+    private readonly IEmailService _emailService;
 
-    public BasketController(AppDbContext context)
+    public BasketController(
+        AppDbContext context,
+        IEmailService emailService)
     {
         _context = context;
+        _emailService = emailService;
     }
 
     private Guid GetUserId()
@@ -92,12 +97,53 @@ public class BasketController : ControllerBase
             };
         }).ToList();
 
+        var user = await _context.Users
+            .FirstOrDefaultAsync(x => x.Id == userId);
+
+        if (user != null && !string.IsNullOrWhiteSpace(user.Email))
+        {
+            foreach (var item in items)
+            {
+                if (item.StockCount > 0 && item.StockCount <= 3)
+                {
+                    var alreadySent = await _context.BasketLowStockEmailLogs
+                        .AnyAsync(x =>
+                            x.UserId == userId &&
+                            x.ProductVariantId == item.ProductVariantId);
+
+                    if (!alreadySent)
+                    {
+                        var productLink = $"https://nemesisbaku.az/products/{item.ProductId}";
+
+                        var sent = await _emailService.SendBasketLowStockAsync(
+                            user.Email,
+                            item.ProductName,
+                            productLink,
+                            item.StockCount);
+
+                        if (sent)
+                        {
+                            _context.BasketLowStockEmailLogs.Add(new BasketLowStockEmailLog
+                            {
+                                UserId = userId,
+                                ProductId = item.ProductId,
+                                ProductVariantId = item.ProductVariantId,
+                                Email = user.Email,
+                                StockCountAtSend = item.StockCount,
+                                SentAt = DateTime.UtcNow
+                            });
+
+                            await _context.SaveChangesAsync();
+                        }
+                    }
+                }
+            }
+        }
+
         var summary = new BasketSummaryDto
         {
             Items = items,
-
             TotalQuantity = items.Sum(x => x.Quantity),
-
             OriginalTotalPrice = items.Sum(x => x.OriginalTotalPrice),
             TotalDiscountAmount = items.Sum(x => x.DiscountAmount),
             TotalPrice = items.Sum(x => x.TotalPrice)

@@ -19,19 +19,19 @@ public class ProfileController : ControllerBase
 {
     private readonly UserManager<AppUser> _userManager;
     private readonly AppDbContext _context;
-    private readonly IWhatsAppService _whatsAppService;
     private readonly IFileService _fileService;
+    private readonly IEmailService _emailService;
 
     public ProfileController(
         UserManager<AppUser> userManager,
         AppDbContext context,
-        IWhatsAppService whatsAppService,
-        IFileService fileService)
+        IFileService fileService,
+        IEmailService emailService)
     {
         _userManager = userManager;
         _context = context;
-        _whatsAppService = whatsAppService;
         _fileService = fileService;
+        _emailService = emailService;
     }
 
     private Guid GetUserId()
@@ -94,9 +94,7 @@ public class ProfileController : ControllerBase
         if (dto.ProfileImage != null)
         {
             if (!string.IsNullOrWhiteSpace(user.ProfileImageUrl))
-            {
                 await _fileService.DeleteImageAsync(user.ProfileImageUrl);
-            }
 
             user.ProfileImageUrl = await _fileService.UploadImageAsync(
                 dto.ProfileImage,
@@ -116,9 +114,19 @@ public class ProfileController : ControllerBase
     [HttpPost("send-change-phone-otp")]
     public async Task<IActionResult> SendChangePhoneOtp(SendChangePhoneOtpDto dto)
     {
+        var userId = GetUserId();
+
+        var user = await _userManager.FindByIdAsync(userId.ToString());
+
+        if (user == null)
+            return NotFound(ApiResponse<string>.Fail("İstifadəçi tapılmadı"));
+
+        if (string.IsNullOrWhiteSpace(user.Email))
+            return BadRequest(ApiResponse<string>.Fail("Email təyin edilməyib"));
+
         var existingUser = await _userManager.FindByNameAsync(dto.NewPhoneNumber);
 
-        if (existingUser != null)
+        if (existingUser != null && existingUser.Id != user.Id)
             return BadRequest(ApiResponse<string>.Fail("Bu nömrə artıq istifadə olunur"));
 
         var code = Random.Shared.Next(100000, 999999).ToString();
@@ -126,6 +134,7 @@ public class ProfileController : ControllerBase
         var otp = new UserOtpCode
         {
             PhoneNumber = dto.NewPhoneNumber,
+            Email = user.Email,
             Code = code,
             Purpose = OtpPurpose.ChangePhoneNumber,
             ExpiresAt = DateTime.UtcNow.AddMinutes(5)
@@ -134,12 +143,12 @@ public class ProfileController : ControllerBase
         _context.UserOtpCodes.Add(otp);
         await _context.SaveChangesAsync();
 
-        var sent = await _whatsAppService.SendOtpAsync(dto.NewPhoneNumber, code);
+        var sent = await _emailService.SendOtpAsync(user.Email, code);
 
         if (!sent)
-            return BadRequest(ApiResponse<string>.Fail("WhatsApp kodu göndərilmədi"));
+            return BadRequest(ApiResponse<string>.Fail("Email təsdiq kodu göndərilmədi"));
 
-        return Ok(ApiResponse<string>.Ok("Yeni nömrəyə təsdiq kodu göndərildi"));
+        return Ok(ApiResponse<string>.Ok("Telefon dəyişmə kodu emailə göndərildi"));
     }
 
     [HttpPost("verify-change-phone")]
@@ -160,6 +169,7 @@ public class ProfileController : ControllerBase
         var otp = await _context.UserOtpCodes
             .Where(x =>
                 x.PhoneNumber == dto.NewPhoneNumber &&
+                x.Email == user.Email &&
                 x.Code == dto.Code &&
                 x.Purpose == OtpPurpose.ChangePhoneNumber &&
                 !x.IsUsed &&
@@ -225,6 +235,12 @@ public class ProfileController : ControllerBase
         if (dto.Latitude == 0 || dto.Longitude == 0)
             return BadRequest(ApiResponse<string>.Fail("Xəritədən konum seçilməlidir"));
 
+        if (dto.Latitude < -90 || dto.Latitude > 90)
+            return BadRequest(ApiResponse<string>.Fail("Latitude düzgün deyil"));
+
+        if (dto.Longitude < -180 || dto.Longitude > 180)
+            return BadRequest(ApiResponse<string>.Fail("Longitude düzgün deyil"));
+
         if (dto.IsDefault)
         {
             var oldDefaults = await _context.UserAddresses
@@ -271,6 +287,12 @@ public class ProfileController : ControllerBase
 
         if (dto.Latitude == 0 || dto.Longitude == 0)
             return BadRequest(ApiResponse<string>.Fail("Xəritədən konum seçilməlidir"));
+
+        if (dto.Latitude < -90 || dto.Latitude > 90)
+            return BadRequest(ApiResponse<string>.Fail("Latitude düzgün deyil"));
+
+        if (dto.Longitude < -180 || dto.Longitude > 180)
+            return BadRequest(ApiResponse<string>.Fail("Longitude düzgün deyil"));
 
         if (dto.IsDefault)
         {
@@ -343,5 +365,4 @@ public class ProfileController : ControllerBase
 
         return Ok(ApiResponse<string>.Ok("Ünvan silindi"));
     }
-
 }

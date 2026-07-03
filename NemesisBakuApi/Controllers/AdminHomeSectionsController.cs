@@ -1,23 +1,36 @@
-﻿using Microsoft.AspNetCore.Authorization;
+﻿using System.Security.Claims;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using NemesisBakuApi.Data;
 using NemesisBakuApi.DTOs.HomeSection;
 using NemesisBakuApi.Entities;
 using NemesisBakuApi.Helpers;
+using NemesisBakuApi.Services.Interfaces;
 
 namespace NemesisBakuApi.Controllers;
 
 [ApiController]
 [Route("api/[controller]")]
-[Authorize(Roles = "SuperAdmin")]
+[Authorize(Roles = "SuperAdmin,Admin")]
 public class AdminHomeSectionsController : ControllerBase
 {
     private readonly AppDbContext _context;
+    private readonly IAuditLogService _auditLogService;
 
-    public AdminHomeSectionsController(AppDbContext context)
+    public AdminHomeSectionsController(
+        AppDbContext context,
+        IAuditLogService auditLogService)
     {
         _context = context;
+        _auditLogService = auditLogService;
+    }
+
+    private Guid GetUserId()
+    {
+        var userId = User.FindFirstValue(ClaimTypes.NameIdentifier);
+        if (string.IsNullOrWhiteSpace(userId)) throw new UnauthorizedAccessException();
+        return Guid.Parse(userId);
     }
 
     [HttpPost]
@@ -39,16 +52,21 @@ public class AdminHomeSectionsController : ControllerBase
             IsActive = dto.IsActive
         };
 
-        if (dto.ProductIds.Any())
+        var productIds = dto.ProductIds
+            .Where(x => x != Guid.Empty)
+            .Distinct()
+            .ToList();
+
+        if (productIds.Any())
         {
             var validProductIds = await _context.Products
-                .Where(x => dto.ProductIds.Contains(x.Id))
+                .Where(x => productIds.Contains(x.Id))
                 .Select(x => x.Id)
                 .ToListAsync();
 
             var order = 0;
 
-            foreach (var productId in dto.ProductIds.Distinct())
+            foreach (var productId in productIds)
             {
                 if (!validProductIds.Contains(productId))
                     continue;
@@ -63,6 +81,12 @@ public class AdminHomeSectionsController : ControllerBase
 
         _context.HomeSections.Add(section);
         await _context.SaveChangesAsync();
+
+        await WriteAuditLogAsync(
+            "Create",
+            "HomeSection",
+            section.Id.ToString(),
+            $"Home section yaradıldı: {section.Title}. DisplayOrder: {section.DisplayOrder}. ProductCount: {productIds.Count}");
 
         return Ok(ApiResponse<Guid>.Ok(section.Id, "Home section yaradıldı"));
     }
@@ -136,6 +160,11 @@ public class AdminHomeSectionsController : ControllerBase
         if (dto.StartDate >= dto.EndDate)
             return BadRequest(ApiResponse<string>.Fail("Başlama tarixi bitmə tarixindən əvvəl olmalıdır"));
 
+        var oldTitle = section.Title;
+        var oldDisplayOrder = section.DisplayOrder;
+        var oldActive = section.IsActive;
+        var oldProductCount = section.Products.Count(x => !x.IsDeleted);
+
         section.Title = dto.Title.Trim();
         section.Subtitle = dto.Subtitle;
         section.DisplayOrder = dto.DisplayOrder;
@@ -150,16 +179,21 @@ public class AdminHomeSectionsController : ControllerBase
             oldProduct.UpdatedAt = DateTime.UtcNow;
         }
 
-        if (dto.ProductIds.Any())
+        var productIds = dto.ProductIds
+            .Where(x => x != Guid.Empty)
+            .Distinct()
+            .ToList();
+
+        if (productIds.Any())
         {
             var validProductIds = await _context.Products
-                .Where(x => dto.ProductIds.Contains(x.Id))
+                .Where(x => productIds.Contains(x.Id))
                 .Select(x => x.Id)
                 .ToListAsync();
 
             var order = 0;
 
-            foreach (var productId in dto.ProductIds.Distinct())
+            foreach (var productId in productIds)
             {
                 if (!validProductIds.Contains(productId))
                     continue;
@@ -173,6 +207,12 @@ public class AdminHomeSectionsController : ControllerBase
         }
 
         await _context.SaveChangesAsync();
+
+        await WriteAuditLogAsync(
+            "Update",
+            "HomeSection",
+            section.Id.ToString(),
+            $"Home section yeniləndi: {oldTitle} → {section.Title}. Order: {oldDisplayOrder} → {section.DisplayOrder}. Active: {oldActive} → {section.IsActive}. ProductCount: {oldProductCount} → {productIds.Count}");
 
         return Ok(ApiResponse<string>.Ok("Home section yeniləndi"));
     }
@@ -199,6 +239,24 @@ public class AdminHomeSectionsController : ControllerBase
 
         await _context.SaveChangesAsync();
 
+        await WriteAuditLogAsync(
+            "Delete",
+            "HomeSection",
+            section.Id.ToString(),
+            $"Home section silindi: {section.Title}. ProductCount: {section.Products.Count}");
+
         return Ok(ApiResponse<string>.Ok("Home section silindi"));
+    }
+
+    private async Task WriteAuditLogAsync(string action, string entityName, string? entityId, string? description)
+    {
+        await _auditLogService.CreateAsync(
+            GetUserId(),
+            action,
+            entityName,
+            entityId,
+            description,
+            HttpContext.Connection.RemoteIpAddress?.ToString(),
+            Request.Headers.UserAgent.ToString());
     }
 }

@@ -20,16 +20,9 @@ public class WhatsAppService : IWhatsAppService
         _settings = options.Value;
     }
 
-    public async Task<bool> SendOtpAsync(string phoneNumber, string code)
+    public async Task<bool> SendOrderNotificationAsync(string phoneNumber, string message)
     {
-        var message = $"NemesisBaku təsdiq kodunuz: {code}";
-
         return await SendTextMessageAsync(phoneNumber, message);
-    }
-
-    public async Task<bool> SendOrderNotificationAsync(string message)
-    {
-        return await SendTextMessageAsync(_settings.SellerPhoneNumber, message);
     }
 
     public async Task<bool> SendTextMessageAsync(string toPhoneNumber, string message)
@@ -40,7 +33,7 @@ public class WhatsAppService : IWhatsAppService
         var payload = new
         {
             messaging_product = "whatsapp",
-            to = toPhoneNumber,
+            to = NormalizePhone(toPhoneNumber),
             type = "text",
             text = new
             {
@@ -60,21 +53,20 @@ public class WhatsAppService : IWhatsAppService
         var response = await _httpClient.SendAsync(request);
 
         var responseContent = await response.Content.ReadAsStringAsync();
-
         Console.WriteLine(responseContent);
 
         return response.IsSuccessStatusCode;
     }
 
     public async Task<bool> SendLowStockNotificationAsync(
-    string sellerPhoneNumber,
-    string productName,
-    string size,
-    string color,
-    int stockCount)
+        string sellerPhoneNumber,
+        string productName,
+        string size,
+        string color,
+        int stockCount)
     {
         var message =
-    $@"⚠️ STOK AZALIR
+$@"⚠️ STOK AZALIR
 
 Məhsul:
 {productName}
@@ -91,5 +83,15 @@ Qalıq:
         return await SendTextMessageAsync(
             sellerPhoneNumber,
             message);
+    }
+
+    private static string NormalizePhone(string phone)
+    {
+        return phone
+            .Replace("+", "")
+            .Replace(" ", "")
+            .Replace("(", "")
+            .Replace(")", "")
+            .Replace("-", "");
     }
 }
