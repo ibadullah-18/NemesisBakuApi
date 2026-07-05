@@ -1,7 +1,7 @@
 ﻿namespace NemesisBakuApi.DTOs.Profile;
 
-public class VerifyChangePhoneDto
+public class VerifyChangeEmailDto
 {
-    public string NewPhoneNumber { get; set; } = null!;
+    public string NewEmail { get; set; } = null!;
     public string Code { get; set; } = null!;
 }

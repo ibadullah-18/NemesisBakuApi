@@ -18,8 +18,40 @@ public class PromoPagesController : ControllerBase
         _context = context;
     }
 
-    [HttpGet("{slug}")]
-    public async Task<IActionResult> GetBySlug(string slug)
+    [HttpGet("active")]
+    public async Task<IActionResult> GetActive([FromQuery] PromoPageType? type)
+    {
+        var now = DateTime.Now;
+
+        var query = _context.PromoPages
+            .Where(x =>
+                x.IsActive &&
+                x.StartDate <= now &&
+                x.EndDate >= now);
+
+        if (type.HasValue)
+            query = query.Where(x => x.Type == type.Value);
+
+        var items = await query
+            .OrderByDescending(x => x.CreatedAt)
+            .Take(5)
+            .Select(x => new
+            {
+                x.Id,
+                x.Title,
+                x.Description,
+                x.Type,
+                x.ImageUrl,
+                x.StartDate,
+                x.EndDate
+            })
+            .ToListAsync();
+
+        return Ok(ApiResponse<object>.Ok(items));
+    }
+
+    [HttpGet("{id:guid}")]
+    public async Task<IActionResult> GetById(Guid id)
     {
         var now = DateTime.Now;
 
@@ -34,7 +66,7 @@ public class PromoPagesController : ControllerBase
                 .ThenInclude(x => x.Product)
                     .ThenInclude(p => p.Category)
             .FirstOrDefaultAsync(x =>
-                x.Slug == slug &&
+                x.Id == id &&
                 x.IsActive &&
                 x.StartDate <= now &&
                 x.EndDate >= now);
@@ -53,7 +85,10 @@ public class PromoPagesController : ControllerBase
                 Model = x.Product.Model,
                 Price = x.Product.Price,
                 DiscountPrice = x.Product.DiscountPrice,
-                IsDiscounted = x.Product.IsDiscounted,
+                IsDiscounted =
+                    x.Product.DiscountPrice.HasValue &&
+                    x.Product.DiscountPrice.Value > 0 &&
+                    x.Product.DiscountPrice.Value < x.Product.Price,
                 IsFeatured = x.Product.IsFeatured,
                 CategoryName = x.Product.Category.Name,
                 BrandName = x.Product.Brand.Name,
@@ -71,48 +106,10 @@ public class PromoPagesController : ControllerBase
             promoPage.Title,
             promoPage.Description,
             promoPage.Type,
-            promoPage.SlotNumber,
-            promoPage.Slug,
             promoPage.ImageUrl,
             Products = products
         };
 
         return Ok(ApiResponse<object>.Ok(result));
-    }
-
-    [HttpGet("active")]
-    public async Task<IActionResult> GetActive([FromQuery] PromoPageType? type)
-    {
-        var now = DateTime.Now;
-
-        var query = _context.PromoPages
-            .Where(x =>
-                x.IsActive &&
-                x.StartDate <= now &&
-                x.EndDate >= now);
-
-        if (type.HasValue)
-        {
-            query = query.Where(x => x.Type == type.Value);
-        }
-
-        var items = await query
-            .OrderBy(x => x.Type)
-            .ThenBy(x => x.SlotNumber)
-            .Select(x => new
-            {
-                x.Id,
-                x.Title,
-                x.Description,
-                x.Type,
-                x.SlotNumber,
-                x.Slug,
-                x.ImageUrl,
-                x.StartDate,
-                x.EndDate
-            })
-            .ToListAsync();
-
-        return Ok(ApiResponse<object>.Ok(items));
     }
 }

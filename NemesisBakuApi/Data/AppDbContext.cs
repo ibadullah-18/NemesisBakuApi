@@ -219,10 +219,6 @@ public class AppDbContext : IdentityDbContext<AppUser, IdentityRole<Guid>, Guid>
             .HasQueryFilter(x => !x.IsDeleted);
 
         builder.Entity<PromoPage>()
-            .HasIndex(x => new { x.Type, x.SlotNumber })
-            .IsUnique();
-
-        builder.Entity<PromoPage>()
             .HasMany(x => x.Products)
             .WithOne(x => x.PromoPage)
             .HasForeignKey(x => x.PromoPageId)

@@ -33,7 +33,10 @@ public class AdminPromoPagesController : ControllerBase
     private Guid GetUserId()
     {
         var userId = User.FindFirstValue(ClaimTypes.NameIdentifier);
-        if (string.IsNullOrWhiteSpace(userId)) throw new UnauthorizedAccessException();
+
+        if (string.IsNullOrWhiteSpace(userId))
+            throw new UnauthorizedAccessException();
+
         return Guid.Parse(userId);
     }
 
@@ -50,23 +53,19 @@ public class AdminPromoPagesController : ControllerBase
         if (dto.Type != PromoPageType.Campaign && dto.Type != PromoPageType.Banner)
             return BadRequest(ApiResponse<string>.Fail("Promo tipi düzgün deyil"));
 
-        var usedSlots = await _context.PromoPages
-            .IgnoreQueryFilters()
-            .Where(x => x.Type == dto.Type)
-            .Select(x => x.SlotNumber)
-            .ToListAsync();
+        if (dto.IsActive)
+        {
+            var activeCount = await _context.PromoPages
+                .CountAsync(x => x.Type == dto.Type && x.IsActive);
 
-        var slot = Enumerable.Range(1, 5).FirstOrDefault(x => !usedSlots.Contains(x));
-
-        if (slot == 0)
-            return BadRequest(ApiResponse<string>.Fail(
-                dto.Type == PromoPageType.Campaign
-                    ? "Maksimum 5 kampaniya yaradıla bilər"
-                    : "Maksimum 5 banner yaradıla bilər"));
-
-        var slugPrefix = dto.Type == PromoPageType.Campaign
-            ? "nemesisbakucomp"
-            : "nemesisbakuban";
+            if (activeCount >= 5)
+            {
+                return BadRequest(ApiResponse<string>.Fail(
+                    dto.Type == PromoPageType.Campaign
+                        ? "Eyni anda maksimum 5 aktiv kampaniya ola bilər"
+                        : "Eyni anda maksimum 5 aktiv banner ola bilər"));
+            }
+        }
 
         string? imageUrl = null;
 
@@ -78,8 +77,6 @@ public class AdminPromoPagesController : ControllerBase
             Title = dto.Title.Trim(),
             Description = dto.Description,
             Type = dto.Type,
-            SlotNumber = slot,
-            Slug = $"{slugPrefix}{slot}",
             ImageUrl = imageUrl,
             StartDate = dto.StartDate,
             EndDate = dto.EndDate,
@@ -120,7 +117,7 @@ public class AdminPromoPagesController : ControllerBase
             "Create",
             "PromoPage",
             promoPage.Id.ToString(),
-            $"Promo səhifə yaradıldı: {promoPage.Title}, Type: {promoPage.Type}, Slug: {promoPage.Slug}, ProductCount: {productIds.Count}");
+            $"Promo yaradıldı: {promoPage.Title}, Type: {promoPage.Type}, ProductCount: {productIds.Count}");
 
         return Ok(ApiResponse<Guid>.Ok(promoPage.Id, "Promo səhifə yaradıldı"));
     }
@@ -136,16 +133,13 @@ public class AdminPromoPagesController : ControllerBase
             query = query.Where(x => x.Type == type.Value);
 
         var items = await query
-            .OrderBy(x => x.Type)
-            .ThenBy(x => x.SlotNumber)
+            .OrderByDescending(x => x.CreatedAt)
             .Select(x => new PromoPageDto
             {
                 Id = x.Id,
                 Title = x.Title,
                 Description = x.Description,
                 Type = x.Type,
-                SlotNumber = x.SlotNumber,
-                Slug = x.Slug,
                 ImageUrl = x.ImageUrl,
                 StartDate = x.StartDate,
                 EndDate = x.EndDate,
@@ -177,11 +171,22 @@ public class AdminPromoPagesController : ControllerBase
         if (dto.StartDate >= dto.EndDate)
             return BadRequest(ApiResponse<string>.Fail("Başlama tarixi bitmə tarixindən əvvəl olmalıdır"));
 
+        if (!promoPage.IsActive && dto.IsActive)
+        {
+            var activeCount = await _context.PromoPages
+                .CountAsync(x => x.Type == promoPage.Type && x.IsActive && x.Id != promoPage.Id);
+
+            if (activeCount >= 5)
+            {
+                return BadRequest(ApiResponse<string>.Fail(
+                    promoPage.Type == PromoPageType.Campaign
+                        ? "Eyni anda maksimum 5 aktiv kampaniya ola bilər"
+                        : "Eyni anda maksimum 5 aktiv banner ola bilər"));
+            }
+        }
+
         var oldTitle = promoPage.Title;
         var oldActive = promoPage.IsActive;
-        var oldStart = promoPage.StartDate;
-        var oldEnd = promoPage.EndDate;
-        var oldProductCount = promoPage.Products.Count(x => !x.IsDeleted);
 
         promoPage.Title = dto.Title.Trim();
         promoPage.Description = dto.Description;
@@ -201,11 +206,12 @@ public class AdminPromoPagesController : ControllerBase
             imageChanged = true;
         }
 
-        foreach (var oldProduct in promoPage.Products)
-        {
-            oldProduct.IsDeleted = true;
-            oldProduct.UpdatedAt = DateTime.UtcNow;
-        }
+        var oldProducts = await _context.PromoPageProducts
+            .IgnoreQueryFilters()
+            .Where(x => x.PromoPageId == promoPage.Id)
+            .ToListAsync();
+
+        _context.PromoPageProducts.RemoveRange(oldProducts);
 
         var productIds = dto.ProductIds
             .Where(x => x != Guid.Empty)
@@ -226,8 +232,9 @@ public class AdminPromoPagesController : ControllerBase
                 if (!validProductIds.Contains(productId))
                     continue;
 
-                promoPage.Products.Add(new PromoPageProduct
+                _context.PromoPageProducts.Add(new PromoPageProduct
                 {
+                    PromoPageId = promoPage.Id,
                     ProductId = productId,
                     Order = order++
                 });
@@ -240,7 +247,7 @@ public class AdminPromoPagesController : ControllerBase
             "Update",
             "PromoPage",
             promoPage.Id.ToString(),
-            $"Promo səhifə yeniləndi: {oldTitle} → {promoPage.Title}. Active: {oldActive} → {promoPage.IsActive}. Date: {oldStart} - {oldEnd} → {promoPage.StartDate} - {promoPage.EndDate}. ProductCount: {oldProductCount} → {productIds.Count}. ImageChanged: {imageChanged}");
+            $"Promo yeniləndi: {oldTitle} → {promoPage.Title}. Active: {oldActive} → {promoPage.IsActive}. ProductCount: {productIds.Count}. ImageChanged: {imageChanged}");
 
         return Ok(ApiResponse<string>.Ok("Promo səhifə yeniləndi"));
     }
@@ -271,46 +278,16 @@ public class AdminPromoPagesController : ControllerBase
             "Delete",
             "PromoPage",
             promoPage.Id.ToString(),
-            $"Promo səhifə silindi: {promoPage.Title}, Type: {promoPage.Type}, Slug: {promoPage.Slug}");
+            $"Promo silindi: {promoPage.Title}, Type: {promoPage.Type}");
 
         return Ok(ApiResponse<string>.Ok("Promo səhifə silindi"));
     }
 
-    [HttpGet("active")]
-    public async Task<IActionResult> GetActive([FromQuery] PromoPageType? type)
-    {
-        var now = DateTime.Now;
-
-        var query = _context.PromoPages
-            .Where(x =>
-                x.IsActive &&
-                x.StartDate <= now &&
-                x.EndDate >= now);
-
-        if (type.HasValue)
-            query = query.Where(x => x.Type == type.Value);
-
-        var items = await query
-            .OrderBy(x => x.Type)
-            .ThenBy(x => x.SlotNumber)
-            .Select(x => new
-            {
-                x.Id,
-                x.Title,
-                x.Description,
-                x.Type,
-                x.SlotNumber,
-                x.Slug,
-                x.ImageUrl,
-                x.StartDate,
-                x.EndDate
-            })
-            .ToListAsync();
-
-        return Ok(ApiResponse<object>.Ok(items));
-    }
-
-    private async Task WriteAuditLogAsync(string action, string entityName, string? entityId, string? description)
+    private async Task WriteAuditLogAsync(
+        string action,
+        string entityName,
+        string? entityId,
+        string? description)
     {
         await _auditLogService.CreateAsync(
             GetUserId(),

@@ -9,9 +9,6 @@ public class PromoPage : BaseEntity
 
     public PromoPageType Type { get; set; }
 
-    public int SlotNumber { get; set; }
-    public string Slug { get; set; } = null!;
-
     public string? ImageUrl { get; set; }
 
     public DateTime StartDate { get; set; }

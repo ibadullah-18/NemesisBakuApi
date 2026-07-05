@@ -8,5 +8,5 @@ public class PromoPageProduct : BaseEntity
     public Guid ProductId { get; set; }
     public Product Product { get; set; } = null!;
 
-    public int Order { get; set; } = 0;
+    public int Order { get; set; }
 }

@@ -12,7 +12,7 @@ namespace NemesisBakuApi.Controllers;
 
 [ApiController]
 [Route("api/[controller]")]
-[Authorize(Roles = "SuperAdmin")]
+[Authorize(Roles = "SuperAdmin,Admin")]
 public class AdminPromoCodesController : ControllerBase
 {
     private readonly AppDbContext _context;

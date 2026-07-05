@@ -80,10 +80,21 @@ public class ProfileController : ControllerBase
             return NotFound(ApiResponse<string>.Fail("İstifadəçi tapılmadı"));
 
         if (!string.IsNullOrWhiteSpace(dto.FullName))
-            user.FullName = dto.FullName;
+            user.FullName = dto.FullName.Trim();
 
-        if (dto.Email != null)
-            user.Email = dto.Email;
+        if (!string.IsNullOrWhiteSpace(dto.PhoneNumber))
+        {
+            var normalizedPhone = NormalizePhone(dto.PhoneNumber);
+
+            var existingPhoneUser = await _userManager.FindByNameAsync(normalizedPhone);
+
+            if (existingPhoneUser != null && existingPhoneUser.Id != user.Id)
+                return BadRequest(ApiResponse<string>.Fail("Bu nömrə artıq istifadə olunur"));
+
+            user.PhoneNumber = normalizedPhone;
+            user.UserName = normalizedPhone;
+            user.NormalizedUserName = normalizedPhone.ToUpper();
+        }
 
         if (dto.DateOfBirth.HasValue)
             user.DateOfBirth = dto.DateOfBirth;
@@ -111,8 +122,8 @@ public class ProfileController : ControllerBase
         return Ok(ApiResponse<string>.Ok("Profil uğurla yeniləndi"));
     }
 
-    [HttpPost("send-change-phone-otp")]
-    public async Task<IActionResult> SendChangePhoneOtp(SendChangePhoneOtpDto dto)
+    [HttpPost("send-change-email-otp")]
+    public async Task<IActionResult> SendChangeEmailOtp(SendChangeEmailOtpDto dto)
     {
         var userId = GetUserId();
 
@@ -122,21 +133,28 @@ public class ProfileController : ControllerBase
             return NotFound(ApiResponse<string>.Fail("İstifadəçi tapılmadı"));
 
         if (string.IsNullOrWhiteSpace(user.Email))
-            return BadRequest(ApiResponse<string>.Fail("Email təyin edilməyib"));
+            return BadRequest(ApiResponse<string>.Fail("Hazırki email tapılmadı"));
 
-        var existingUser = await _userManager.FindByNameAsync(dto.NewPhoneNumber);
+        if (string.IsNullOrWhiteSpace(dto.NewEmail))
+            return BadRequest(ApiResponse<string>.Fail("Yeni email boş ola bilməz"));
 
-        if (existingUser != null && existingUser.Id != user.Id)
-            return BadRequest(ApiResponse<string>.Fail("Bu nömrə artıq istifadə olunur"));
+        var newEmail = dto.NewEmail.Trim();
+
+        if (user.Email.Equals(newEmail, StringComparison.OrdinalIgnoreCase))
+            return BadRequest(ApiResponse<string>.Fail("Yeni email hazırki email ilə eynidir"));
+
+        var existingEmailUser = await _userManager.FindByEmailAsync(newEmail);
+
+        if (existingEmailUser != null && existingEmailUser.Id != user.Id)
+            return BadRequest(ApiResponse<string>.Fail("Bu email artıq istifadə olunur"));
 
         var code = Random.Shared.Next(100000, 999999).ToString();
 
         var otp = new UserOtpCode
         {
-            PhoneNumber = dto.NewPhoneNumber,
             Email = user.Email,
             Code = code,
-            Purpose = OtpPurpose.ChangePhoneNumber,
+            Purpose = OtpPurpose.ChangeEmail,
             ExpiresAt = DateTime.UtcNow.AddMinutes(5)
         };
 
@@ -148,11 +166,11 @@ public class ProfileController : ControllerBase
         if (!sent)
             return BadRequest(ApiResponse<string>.Fail("Email təsdiq kodu göndərilmədi"));
 
-        return Ok(ApiResponse<string>.Ok("Telefon dəyişmə kodu emailə göndərildi"));
+        return Ok(ApiResponse<string>.Ok("Təsdiq kodu hazırki email ünvanınıza göndərildi"));
     }
 
-    [HttpPost("verify-change-phone")]
-    public async Task<IActionResult> VerifyChangePhone(VerifyChangePhoneDto dto)
+    [HttpPost("verify-change-email")]
+    public async Task<IActionResult> VerifyChangeEmail(VerifyChangeEmailDto dto)
     {
         var userId = GetUserId();
 
@@ -161,17 +179,24 @@ public class ProfileController : ControllerBase
         if (user == null)
             return NotFound(ApiResponse<string>.Fail("İstifadəçi tapılmadı"));
 
-        var existingUser = await _userManager.FindByNameAsync(dto.NewPhoneNumber);
+        if (string.IsNullOrWhiteSpace(user.Email))
+            return BadRequest(ApiResponse<string>.Fail("Hazırki email tapılmadı"));
 
-        if (existingUser != null && existingUser.Id != user.Id)
-            return BadRequest(ApiResponse<string>.Fail("Bu nömrə artıq istifadə olunur"));
+        if (string.IsNullOrWhiteSpace(dto.NewEmail))
+            return BadRequest(ApiResponse<string>.Fail("Yeni email boş ola bilməz"));
+
+        var newEmail = dto.NewEmail.Trim();
+
+        var existingEmailUser = await _userManager.FindByEmailAsync(newEmail);
+
+        if (existingEmailUser != null && existingEmailUser.Id != user.Id)
+            return BadRequest(ApiResponse<string>.Fail("Bu email artıq istifadə olunur"));
 
         var otp = await _context.UserOtpCodes
             .Where(x =>
-                x.PhoneNumber == dto.NewPhoneNumber &&
                 x.Email == user.Email &&
                 x.Code == dto.Code &&
-                x.Purpose == OtpPurpose.ChangePhoneNumber &&
+                x.Purpose == OtpPurpose.ChangeEmail &&
                 !x.IsUsed &&
                 x.ExpiresAt > DateTime.UtcNow)
             .OrderByDescending(x => x.CreatedAt)
@@ -180,8 +205,9 @@ public class ProfileController : ControllerBase
         if (otp == null)
             return BadRequest(ApiResponse<string>.Fail("Təsdiq kodu yanlışdır və ya vaxtı bitib"));
 
-        user.PhoneNumber = dto.NewPhoneNumber;
-        user.UserName = dto.NewPhoneNumber;
+        user.Email = newEmail;
+        user.NormalizedEmail = newEmail.ToUpper();
+        user.EmailConfirmed = true;
         user.UpdatedAt = DateTime.UtcNow;
 
         otp.IsUsed = true;
@@ -194,7 +220,7 @@ public class ProfileController : ControllerBase
 
         await _context.SaveChangesAsync();
 
-        return Ok(ApiResponse<string>.Ok("Telefon nömrəsi uğurla dəyişdirildi"));
+        return Ok(ApiResponse<string>.Ok("Email uğurla dəyişdirildi"));
     }
 
     [HttpGet("addresses")]
@@ -364,5 +390,15 @@ public class ProfileController : ControllerBase
         await _context.SaveChangesAsync();
 
         return Ok(ApiResponse<string>.Ok("Ünvan silindi"));
+    }
+
+    private static string NormalizePhone(string phone)
+    {
+        return phone
+            .Replace("+", "")
+            .Replace(" ", "")
+            .Replace("(", "")
+            .Replace(")", "")
+            .Replace("-", "");
     }
 }
