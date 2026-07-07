@@ -20,16 +20,13 @@ namespace NemesisBakuApi.Controllers;
 public class OrdersController : ControllerBase
 {
     private readonly AppDbContext _context;
-    private readonly IWhatsAppService _whatsAppService;
     private readonly DeliverySettings _deliverySettings;
 
     public OrdersController(
         AppDbContext context,
-        IWhatsAppService whatsAppService,
         IOptions<DeliverySettings> deliveryOptions)
     {
         _context = context;
-        _whatsAppService = whatsAppService;
         _deliverySettings = deliveryOptions.Value;
     }
 
@@ -308,13 +305,6 @@ public class OrdersController : ControllerBase
         await transaction.CommitAsync();
 
         var message = BuildOrderWhatsAppMessage(order);
-
-        var sent = await _whatsAppService.SendTextMessageAsync(
-            storeInfo.WhatsAppNumber,
-            message);
-
-        order.IsWhatsappMessageSent = sent;
-        order.WhatsappMessageSentAt = sent ? DateTime.UtcNow : null;
 
         await _context.SaveChangesAsync();
 

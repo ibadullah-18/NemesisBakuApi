@@ -32,7 +32,6 @@ public class AppDbContext : IdentityDbContext<AppUser, IdentityRole<Guid>, Guid>
     public DbSet<WhatsAppClickLog> WhatsAppClickLogs { get; set; }
     public DbSet<WhatsAppProductInquiry> WhatsAppProductInquiries { get; set; }
 
-    public DbSet<Campaign> Campaigns { get; set; }
     public DbSet<PromoCode> PromoCodes { get; set; }
     public DbSet<PromoCodeUsage> PromoCodeUsages { get; set; }
 
@@ -190,9 +189,6 @@ public class AppDbContext : IdentityDbContext<AppUser, IdentityRole<Guid>, Guid>
             .HasQueryFilter(x => !x.IsDeleted);
 
         builder.Entity<OrderItem>()
-            .HasQueryFilter(x => !x.IsDeleted);
-
-        builder.Entity<Campaign>()
             .HasQueryFilter(x => !x.IsDeleted);
 
         builder.Entity<PromoCode>()

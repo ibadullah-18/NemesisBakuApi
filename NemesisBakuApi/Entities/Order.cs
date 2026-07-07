@@ -35,6 +35,9 @@ public class Order : BaseEntity
     public decimal PromoDiscountAmount { get; set; }
     public decimal TotalPrice { get; set; }
 
+    public bool StockReturned { get; set; } = false;
+    public DateTime? StockReturnedAt { get; set; }
+
     public OrderStatus Status { get; set; } = OrderStatus.Pending;
 
     public bool IsWhatsappMessageSent { get; set; } = false;

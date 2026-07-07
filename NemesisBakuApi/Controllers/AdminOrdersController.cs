@@ -189,6 +189,26 @@ public class AdminOrdersController : ControllerBase
         order.Status = dto.NewStatus;
         order.UpdatedAt = DateTime.UtcNow;
 
+        if ((dto.NewStatus == OrderStatus.Cancelled ||
+         dto.NewStatus == OrderStatus.Rejected) &&
+        !order.StockReturned)
+            {
+                foreach (var item in order.Items)
+                {
+                    var variant = await _context.ProductVariants
+                        .FirstOrDefaultAsync(x => x.Id == item.ProductVariantId);
+
+                    if (variant != null)
+                    {
+                        variant.StockCount += item.Quantity;
+                        variant.UpdatedAt = DateTime.UtcNow;
+                    }
+                }
+
+                order.StockReturned = true;
+                order.StockReturnedAt = DateTime.UtcNow;
+            }
+
         _context.OrderStatusHistories.Add(new OrderStatusHistory
         {
             OrderId = order.Id,
@@ -205,6 +225,17 @@ public class AdminOrdersController : ControllerBase
             "Order",
             order.Id.ToString(),
             $"Sifariş statusu dəyişdirildi: {oldStatus} → {dto.NewStatus}. OrderNumber: {order.OrderNumber}");
+
+        if (order.StockReturned &&
+            (dto.NewStatus == OrderStatus.Cancelled ||
+             dto.NewStatus == OrderStatus.Rejected))
+        {
+            await WriteAuditLogAsync(
+                "StockReturned",
+                "Order",
+                order.Id.ToString(),
+                $"Sifariş ləğv/rədd edildi və məhsullar stoka geri qaytarıldı. OrderNumber: {order.OrderNumber}");
+        }
 
         if (order.User != null && !string.IsNullOrWhiteSpace(order.User.Email))
         {

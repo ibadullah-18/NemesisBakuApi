@@ -92,7 +92,6 @@ builder.Services
 
 #region service
 builder.Services.AddScoped<JwtTokenGenerator>();
-builder.Services.AddScoped<IWhatsAppService, WhatsAppService>();
 builder.Services.AddScoped<IFileService, CloudinaryFileService>();
 builder.Services.AddValidatorsFromAssemblyContaining<ProductCreateDtoValidator>();
 builder.Services.AddScoped<IAuditLogService, AuditLogService>();

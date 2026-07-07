@@ -150,24 +150,40 @@ public class AdminProductsController : ControllerBase
             Model = product.Model,
             Price = product.Price,
             DiscountPrice = product.DiscountPrice,
-            IsDiscounted = product.IsDiscounted,
+
+            IsDiscounted =
+                product.DiscountPrice.HasValue &&
+                product.DiscountPrice.Value > 0 &&
+                product.DiscountPrice.Value < product.Price,
+
             IsFeatured = product.IsFeatured,
             CategoryName = product.Category.Name,
             BrandName = product.Brand.Name,
+
             Images = product.Images
-                .OrderBy(x => x.Order)
-                .Select(x => x.ImageUrl)
+                .OrderByDescending(x => x.IsMain)
+                .ThenBy(x => x.Order)
+                .Select(x => new ProductImageDetailDto
+                {
+                    Id = x.Id,
+                    ImageUrl = x.ImageUrl,
+                    IsMain = x.IsMain,
+                    DisplayOrder = x.Order
+                })
                 .ToList(),
-            Variants = product.Variants.Select(v => new ProductVariantDetailDto
-            {
-                Id = v.Id,
-                SizeId = v.SizeId,
-                SizeValue = v.Size.Value,
-                ColorId = v.ColorId,
-                ColorName = v.Color.Name,
-                ColorHexCode = v.Color.HexCode,
-                StockCount = v.StockCount
-            }).ToList()
+
+            Variants = product.Variants
+                .Select(v => new ProductVariantDetailDto
+                {
+                    Id = v.Id,
+                    SizeId = v.SizeId,
+                    SizeValue = v.Size.Value,
+                    ColorId = v.ColorId,
+                    ColorName = v.Color.Name,
+                    ColorHexCode = v.Color.HexCode,
+                    StockCount = v.StockCount
+                })
+                .ToList()
         };
 
         return Ok(ApiResponse<ProductDetailDto>.Ok(dto));
@@ -278,7 +294,13 @@ public class AdminProductsController : ControllerBase
             image.Id.ToString(),
             $"Məhsula şəkil əlavə olundu. ProductId: {productId}");
 
-        return Ok(ApiResponse<string>.Ok(imageUrl, "Şəkil məhsula əlavə olundu"));
+        return Ok(ApiResponse<object>.Ok(new
+        {
+            image.Id,
+            image.ImageUrl,
+            image.IsMain,
+            DisplayOrder = image.Order
+        }, "Şəkil məhsula əlavə olundu"));
     }
 
     [HttpDelete("images/{imageId}")]

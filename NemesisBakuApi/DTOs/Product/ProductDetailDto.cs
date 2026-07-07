@@ -19,8 +19,16 @@ public class ProductDetailDto
     public string CategoryName { get; set; } = null!;
     public string BrandName { get; set; } = null!;
 
-    public List<string> Images { get; set; } = new();
+    public List<ProductImageDetailDto> Images { get; set; } = new();
     public List<ProductVariantDetailDto> Variants { get; set; } = new();
+}
+
+public class ProductImageDetailDto
+{
+    public Guid Id { get; set; }
+    public string ImageUrl { get; set; } = null!;
+    public bool IsMain { get; set; }
+    public int DisplayOrder { get; set; }
 }
 
 public class ProductVariantDetailDto

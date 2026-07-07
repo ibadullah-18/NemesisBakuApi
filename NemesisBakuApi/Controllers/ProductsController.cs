@@ -209,14 +209,23 @@ public class ProductsController : ControllerBase
             Model = product.Model,
             Price = product.Price,
             DiscountPrice = product.DiscountPrice,
-            IsDiscounted = product.IsDiscounted,
+            IsDiscounted =
+                product.DiscountPrice.HasValue &&
+                product.DiscountPrice.Value > 0 &&
+                product.DiscountPrice.Value < product.Price,
             IsFeatured = product.IsFeatured,
             CategoryName = product.Category.Name,
             BrandName = product.Brand.Name,
             Images = product.Images
                 .OrderByDescending(x => x.IsMain)
                 .ThenBy(x => x.Order)
-                .Select(x => x.ImageUrl)
+                .Select(x => new ProductImageDetailDto
+                {
+                    Id = x.Id,
+                    ImageUrl = x.ImageUrl,
+                    IsMain = x.IsMain,
+                    DisplayOrder = x.Order
+                })
                 .ToList(),
             Variants = product.Variants
                 .Where(v => v.IsActive)
