@@ -168,7 +168,13 @@ using (var scope = app.Services.CreateScope())
 {
     var services = scope.ServiceProvider;
 
+    var db = services.GetRequiredService<AppDbContext>();
+
+    // Bütün migration-ları avtomatik tətbiq et
+    await db.Database.MigrateAsync();
+
+    // Sonra rolları və super admini yarat
     await DbSeeder.SeedRolesAsync(services);
-}
+} 
 
 app.Run();
