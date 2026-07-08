@@ -1,0 +1,80 @@
+﻿services:
+  sqlserver:
+    image: mcr.microsoft.com/mssql/server:2022-latest
+    container_name: nemesisbaku-sqlserver
+    environment:
+      ACCEPT_EULA: "Y"
+      SA_PASSWORD: "${SA_PASSWORD}"
+      MSSQL_PID: "Express"
+    ports:
+      - "1433:1433"
+    volumes:
+      - nemesisbaku_sql_data:/var/opt/mssql
+    restart: unless-stopped
+    healthcheck:
+      test: /opt/mssql-tools18/bin/sqlcmd -S localhost -U sa -P "${SA_PASSWORD}" -C -Q "SELECT 1" || exit 1
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: nemesisbaku-api:latest
+    container_name: nemesisbaku-api
+    depends_on:
+      sqlserver:
+        condition: service_healthy
+    environment:
+      ASPNETCORE_ENVIRONMENT: "${ASPNETCORE_ENVIRONMENT}"
+      ASPNETCORE_URLS: "${ASPNETCORE_URLS}"
+      ConnectionStrings__DefaultConnection: "Server=sqlserver,1433;Database=${DB_NAME};User Id=sa;Password=${SA_PASSWORD};TrustServerCertificate=True"
+      Jwt__Key: "${JWT_KEY}"
+      Jwt__Issuer: "${JWT_ISSUER}"
+      Jwt__Audience: "${JWT_AUDIENCE}"
+      Jwt__ExpireMinutes: "${JWT_EXPIRE_MINUTES}"
+      Cloudinary__CloudName: "${CLOUDINARY_CLOUD_NAME}"
+      Cloudinary__ApiKey: "${CLOUDINARY_API_KEY}"
+      Cloudinary__ApiSecret: "${CLOUDINARY_API_SECRET}"
+      Email__Accounts__0__Password: "${EMAIL_0_PASSWORD}"
+      Email__Accounts__1__Password: "${EMAIL_1_PASSWORD}"
+      Email__Accounts__2__Password: "${EMAIL_2_PASSWORD}"
+      Email__Accounts__3__Password: "${EMAIL_3_PASSWORD}"
+      Email__Accounts__4__Password: "${EMAIL_4_PASSWORD}"
+    ports:
+      - "8080:8080"
+    volumes:
+      - nemesisbaku_dataprotection:/root/.aspnet/DataProtection-Keys
+    restart: unless-stopped
+
+  frontend:
+    build:
+      context: C:/Users/ibadu/OneDrive/Desktop/nemesisbakufrontend/nemesisbaku-frontend
+      dockerfile: Dockerfile
+      args:
+        VITE_API_BASE_URL: "http://localhost:8080"
+    image: nemesisbaku-frontend:latest
+    container_name: nemesisbaku-frontend
+    depends_on:
+      - api
+    ports:
+      - "3001:80"
+    restart: unless-stopped
+
+  nginx:
+    image: nginx:1.29-alpine
+    container_name: nemesisbaku-nginx
+    depends_on:
+      - frontend
+      - api
+    ports:
+      - "80:80"
+    volumes:
+      - ./nginx/default.conf:/etc/nginx/conf.d/default.conf:ro
+    restart: unless-stopped
+
+volumes:
+  nemesisbaku_sql_data:
+  nemesisbaku_dataprotection:
