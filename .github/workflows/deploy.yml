@@ -1,0 +1,29 @@
+name: Deploy NemesisBaku Backend
+
+on:
+  push:
+    branches:
+      - master
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Deploy backend to VPS
+        uses: appleboy/ssh-action@v1.2.2
+        with:
+          host: ${{ secrets.VPS_HOST }}
+          username: ${{ secrets.VPS_USER }}
+          key: ${{ secrets.VPS_SSH_KEY }}
+          script: |
+            set -e
+
+            cd /opt/nemesisbaku/backend
+            git pull origin master
+
+            cd /opt/nemesisbaku/backend/NemesisBakuApi
+            docker compose build api
+            docker compose up -d api nginx
+
+            docker image prune -f
