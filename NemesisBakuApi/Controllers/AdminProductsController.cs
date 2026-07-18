@@ -6,7 +6,9 @@ using NemesisBakuApi.DTOs.Product;
 using NemesisBakuApi.Entities;
 using NemesisBakuApi.Helpers;
 using NemesisBakuApi.Services.Interfaces;
+using System.Globalization;
 using System.Security.Claims;
+using System.Text.RegularExpressions;
 
 namespace NemesisBakuApi.Controllers;
 
@@ -15,6 +17,10 @@ namespace NemesisBakuApi.Controllers;
 [Authorize(Roles = "SuperAdmin,Admin")]
 public class AdminProductsController : ControllerBase
 {
+    private static readonly Regex SizeNumberRegex = new(
+        @"\d+(?:[.,]\d+)?",
+        RegexOptions.Compiled | RegexOptions.CultureInvariant);
+
     private readonly AppDbContext _context;
     private readonly IFileService _fileService;
     private readonly IAuditLogService _auditLogService;
@@ -173,6 +179,9 @@ public class AdminProductsController : ControllerBase
                 .ToList(),
 
             Variants = product.Variants
+                .OrderBy(v => GetNumericSize(v.Size.Value))
+                .ThenBy(v => v.Color.Name)
+                .ThenBy(v => v.Id)
                 .Select(v => new ProductVariantDetailDto
                 {
                     Id = v.Id,
@@ -555,6 +564,27 @@ public class AdminProductsController : ControllerBase
             .ToListAsync();
 
         return Ok(ApiResponse<List<LowStockProductDto>>.Ok(items));
+    }
+
+    private static decimal GetNumericSize(string? sizeValue)
+    {
+        if (string.IsNullOrWhiteSpace(sizeValue))
+            return decimal.MaxValue;
+
+        var match = SizeNumberRegex.Match(sizeValue);
+
+        if (!match.Success)
+            return decimal.MaxValue;
+
+        var normalizedValue = match.Value.Replace(',', '.');
+
+        return decimal.TryParse(
+            normalizedValue,
+            NumberStyles.Number,
+            CultureInfo.InvariantCulture,
+            out var numericSize)
+            ? numericSize
+            : decimal.MaxValue;
     }
 
     private Guid? GetUserIdOrNull()

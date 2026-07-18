@@ -1,4 +1,5 @@
-﻿using Microsoft.AspNetCore.Identity;
+﻿using System.Security.Cryptography;
+using Microsoft.AspNetCore.Identity;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using NemesisBakuApi.Data;
@@ -35,6 +36,29 @@ public class AuthController : ControllerBase
         _context = context;
         _emailService = emailService;
         _fileService = fileService;
+    }
+
+    private static string CreateOtpCode()
+    {
+        return RandomNumberGenerator.GetInt32(100000, 1000000).ToString();
+    }
+
+    private async Task InvalidatePreviousOtpsAsync(
+        string email,
+        OtpPurpose purpose)
+    {
+        var previousCodes = await _context.UserOtpCodes
+            .Where(x =>
+                x.Email == email &&
+                x.Purpose == purpose &&
+                !x.IsUsed)
+            .ToListAsync();
+
+        foreach (var previousCode in previousCodes)
+        {
+            previousCode.IsUsed = true;
+            previousCode.UsedAt = DateTime.UtcNow;
+        }
     }
 
     [HttpPost("login")]
@@ -91,14 +115,15 @@ public class AuthController : ControllerBase
     [HttpPost("send-register-otp")]
     public async Task<IActionResult> SendRegisterOtp(SendOtpDto dto)
     {
-        var email = dto.Email.Trim();
+        var email = dto.Email.Trim().ToLowerInvariant();
 
         var existingUser = await _userManager.FindByEmailAsync(email);
 
         if (existingUser != null)
             return BadRequest(ApiResponse<string>.Fail("Bu email artıq qeydiyyatdan keçib"));
 
-        var code = new Random().Next(100000, 999999).ToString();
+        await InvalidatePreviousOtpsAsync(email, OtpPurpose.Register);
+        var code = CreateOtpCode();
 
         var otp = new UserOtpCode
         {
@@ -114,7 +139,12 @@ public class AuthController : ControllerBase
         var sent = await _emailService.SendOtpAsync(email, code);
 
         if (!sent)
+        {
+            otp.IsUsed = true;
+            otp.UsedAt = DateTime.UtcNow;
+            await _context.SaveChangesAsync();
             return BadRequest(ApiResponse<string>.Fail("Email təsdiq kodu göndərilmədi"));
+        }
 
         return Ok(ApiResponse<string>.Ok("Təsdiq kodu emailə göndərildi"));
     }
@@ -134,14 +164,15 @@ public class AuthController : ControllerBase
         if (existingPhone != null)
             return BadRequest(ApiResponse<string>.Fail("Bu nömrə artıq qeydiyyatdan keçib"));
 
-        var existingEmail = await _userManager.FindByEmailAsync(dto.Email);
+        var email = dto.Email.Trim().ToLowerInvariant();
+        var existingEmail = await _userManager.FindByEmailAsync(email);
 
         if (existingEmail != null)
             return BadRequest(ApiResponse<string>.Fail("Bu email artıq qeydiyyatdan keçib"));
 
         var otp = await _context.UserOtpCodes
             .Where(x =>
-                x.Email == dto.Email &&
+                x.Email == email &&
                 x.Code == dto.Code &&
                 x.Purpose == OtpPurpose.Register &&
                 !x.IsUsed &&
@@ -156,9 +187,16 @@ public class AuthController : ControllerBase
 
         if (dto.ProfileImage != null)
         {
-            profileImageUrl = await _fileService.UploadImageAsync(
-                dto.ProfileImage,
-                "profiles");
+            try
+            {
+                profileImageUrl = await _fileService.UploadImageAsync(
+                    dto.ProfileImage,
+                    "profiles");
+            }
+            catch (InvalidOperationException ex)
+            {
+                return BadRequest(ApiResponse<string>.Fail(ex.Message));
+            }
         }
 
         var user = new AppUser
@@ -166,7 +204,7 @@ public class AuthController : ControllerBase
             FullName = dto.FullName,
             UserName = dto.PhoneNumber,
             PhoneNumber = dto.PhoneNumber,
-            Email = dto.Email,
+            Email = email,
             DateOfBirth = dto.DateOfBirth,
             LoyaltyCardCode = dto.LoyaltyCardCode,
             ProfileImageUrl = profileImageUrl,
@@ -192,7 +230,7 @@ public class AuthController : ControllerBase
 
         await _context.SaveChangesAsync();
 
-        await _emailService.SendWelcomeAsync(dto.Email, dto.FullName);
+        await _emailService.SendWelcomeAsync(email, dto.FullName);
 
         return Ok(ApiResponse<string>.Ok("Qeydiyyat uğurla tamamlandı"));
     }
@@ -200,14 +238,15 @@ public class AuthController : ControllerBase
     [HttpPost("send-forgot-password-otp")]
     public async Task<IActionResult> SendForgotPasswordOtp(SendOtpDto dto)
     {
-        var email = dto.Email.Trim();
+        var email = dto.Email.Trim().ToLowerInvariant();
 
         var user = await _userManager.FindByEmailAsync(email);
 
         if (user == null)
             return BadRequest(ApiResponse<string>.Fail("Bu email ilə istifadəçi tapılmadı"));
 
-        var code = new Random().Next(100000, 999999).ToString();
+        await InvalidatePreviousOtpsAsync(email, OtpPurpose.ForgotPassword);
+        var code = CreateOtpCode();
 
         var otp = new UserOtpCode
         {
@@ -223,7 +262,12 @@ public class AuthController : ControllerBase
         var sent = await _emailService.SendOtpAsync(email, code);
 
         if (!sent)
+        {
+            otp.IsUsed = true;
+            otp.UsedAt = DateTime.UtcNow;
+            await _context.SaveChangesAsync();
             return BadRequest(ApiResponse<string>.Fail("Email təsdiq kodu göndərilmədi"));
+        }
 
         return Ok(ApiResponse<string>.Ok("Şifrə yeniləmə kodu emailə göndərildi"));
     }
@@ -234,7 +278,7 @@ public class AuthController : ControllerBase
         if (dto.NewPassword != dto.ConfirmNewPassword)
             return BadRequest(ApiResponse<string>.Fail("Şifrələr uyğun deyil"));
 
-        var email = dto.Email.Trim();
+        var email = dto.Email.Trim().ToLowerInvariant();
 
         var user = await _userManager.FindByEmailAsync(email);
 
@@ -267,6 +311,16 @@ public class AuthController : ControllerBase
         otp.IsUsed = true;
         otp.UsedAt = DateTime.UtcNow;
 
+        var activeRefreshTokens = await _context.RefreshTokens
+            .Where(x =>
+                x.UserId == user.Id &&
+                !x.IsUsed &&
+                !x.IsRevoked)
+            .ToListAsync();
+
+        foreach (var token in activeRefreshTokens)
+            token.IsRevoked = true;
+
         await _context.SaveChangesAsync();
 
         return Ok(ApiResponse<string>.Ok("Şifrə uğurla yeniləndi"));
@@ -290,6 +344,13 @@ public class AuthController : ControllerBase
         refreshToken.UsedAt = DateTime.UtcNow;
 
         var user = refreshToken.User;
+
+        if (user == null || !user.IsActive || user.IsDeleted)
+        {
+            refreshToken.IsRevoked = true;
+            await _context.SaveChangesAsync();
+            return Unauthorized(ApiResponse<string>.Fail("Hesab aktiv deyil"));
+        }
 
         var newAccessToken = await _jwtTokenGenerator.GenerateTokenAsync(user);
 
