@@ -1,4 +1,6 @@
-﻿using System.Security.Claims;
+﻿using System;
+using System.Linq;
+using System.Security.Claims;
 using System.Text;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
@@ -14,6 +16,7 @@ namespace NemesisBakuApi.Controllers;
 [Route("api/[controller]")]
 public class WhatsAppController : ControllerBase
 {
+    private const string AzerbaijanCountryCode = "994";
     private readonly AppDbContext _context;
 
     public WhatsAppController(AppDbContext context)
@@ -23,25 +26,57 @@ public class WhatsAppController : ControllerBase
 
     private Guid? GetUserIdOrNull()
     {
-        var userId = User.FindFirstValue(ClaimTypes.NameIdentifier);
+        var value = User.FindFirstValue(ClaimTypes.NameIdentifier);
 
-        if (string.IsNullOrWhiteSpace(userId))
-            return null;
-
-        return Guid.Parse(userId);
+        return Guid.TryParse(value, out var userId) ? userId : null;
     }
 
-    [HttpGet("product-inquiry/{productId}")]
+    private static string? NormalizeWhatsAppNumber(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+            return null;
+
+        var digits = new string(value.Where(char.IsDigit).ToArray());
+
+        if (digits.StartsWith("00", StringComparison.Ordinal))
+            digits = digits[2..];
+
+        if (digits.Length == 10 && digits.StartsWith('0'))
+            digits = AzerbaijanCountryCode + digits[1..];
+        else if (digits.Length == 9)
+            digits = AzerbaijanCountryCode + digits;
+
+        return digits.Length is >= 10 and <= 15 ? digits : null;
+    }
+
+    private static string BuildWhatsAppUrl(string phoneNumber, string message)
+    {
+        return $"https://wa.me/{phoneNumber}?text={Uri.EscapeDataString(message)}";
+    }
+
+    private async Task<(StoreInfo? StoreInfo, string? PhoneNumber)> GetStoreWhatsAppAsync()
+    {
+        var storeInfo = await _context.StoreInfos
+            .AsNoTracking()
+            .FirstOrDefaultAsync();
+
+        return (storeInfo, NormalizeWhatsAppNumber(storeInfo?.WhatsAppNumber));
+    }
+
+    [HttpGet("product-inquiry/{productId:guid}")]
     public async Task<IActionResult> GetProductInquiryLink(Guid productId)
     {
-        var storeInfo = await _context.StoreInfos.FirstOrDefaultAsync();
+        var (_, phoneNumber) = await GetStoreWhatsAppAsync();
 
-        if (storeInfo == null || string.IsNullOrWhiteSpace(storeInfo.WhatsAppNumber))
-            return BadRequest(ApiResponse<string>.Fail("Mağaza WhatsApp nömrəsi təyin edilməyib"));
+        if (phoneNumber == null)
+        {
+            return BadRequest(
+                ApiResponse<string>.Fail(
+                    "Mağaza WhatsApp nömrəsi düzgün beynəlxalq formatda deyil"));
+        }
 
         var product = await _context.Products
-            .Include(x => x.Brand)
-            .Include(x => x.Category)
+            .AsNoTracking()
             .FirstOrDefaultAsync(x => x.Id == productId && x.IsActive);
 
         if (product == null)
@@ -55,23 +90,22 @@ public class WhatsAppController : ControllerBase
             $"Kod: {product.ProductCode}\n" +
             $"Link: {productLink}";
 
-        var encodedMessage = Uri.EscapeDataString(message);
-
-        var url = $"https://wa.me/{storeInfo.WhatsAppNumber}?text={encodedMessage}";
+        var url = BuildWhatsAppUrl(phoneNumber, message);
+        var userId = GetUserIdOrNull();
 
         _context.WhatsAppProductInquiries.Add(new WhatsAppProductInquiry
         {
-            UserId = GetUserIdOrNull(),
+            UserId = userId,
             ProductId = product.Id,
             ProductLink = productLink,
-            SellerPhoneNumber = storeInfo.WhatsAppNumber,
+            SellerPhoneNumber = phoneNumber,
             IpAddress = HttpContext.Connection.RemoteIpAddress?.ToString(),
             UserAgent = Request.Headers.UserAgent.ToString()
         });
 
         _context.WhatsAppClickLogs.Add(new WhatsAppClickLog
         {
-            UserId = GetUserIdOrNull(),
+            UserId = userId,
             ProductId = product.Id,
             PageUrl = productLink,
             IpAddress = HttpContext.Connection.RemoteIpAddress?.ToString(),
@@ -91,10 +125,14 @@ public class WhatsAppController : ControllerBase
     [HttpGet("basket-link")]
     public async Task<IActionResult> GetBasketWhatsAppLink()
     {
-        var storeInfo = await _context.StoreInfos.FirstOrDefaultAsync();
+        var (_, phoneNumber) = await GetStoreWhatsAppAsync();
 
-        if (storeInfo == null || string.IsNullOrWhiteSpace(storeInfo.WhatsAppNumber))
-            return BadRequest(ApiResponse<string>.Fail("Mağaza WhatsApp nömrəsi təyin edilməyib"));
+        if (phoneNumber == null)
+        {
+            return BadRequest(
+                ApiResponse<string>.Fail(
+                    "Mağaza WhatsApp nömrəsi düzgün beynəlxalq formatda deyil"));
+        }
 
         var userId = GetUserIdOrNull();
 
@@ -102,6 +140,7 @@ public class WhatsAppController : ControllerBase
             return Unauthorized(ApiResponse<string>.Fail("Giriş edilməyib"));
 
         var basketItems = await _context.BasketItems
+            .AsNoTracking()
             .Include(x => x.Product)
             .Include(x => x.ProductVariant)
                 .ThenInclude(v => v.Size)
@@ -110,35 +149,38 @@ public class WhatsAppController : ControllerBase
             .Where(x => x.UserId == userId.Value)
             .ToListAsync();
 
-        if (!basketItems.Any())
+        if (basketItems.Count == 0)
             return BadRequest(ApiResponse<string>.Fail("Səbət boşdur"));
 
-        var sb = new StringBuilder();
+        var message = new StringBuilder();
 
-        sb.AppendLine("Salam, bu məhsullarla maraqlanıram:");
-        sb.AppendLine();
+        message.AppendLine("Salam, bu məhsullarla maraqlanıram:");
+        message.AppendLine();
 
         foreach (var item in basketItems)
         {
             var productLink = $"https://nemesisbaku.az/products/{item.ProductId}";
 
-            var price = item.Product.IsDiscounted && item.Product.DiscountPrice.HasValue
-                ? item.Product.DiscountPrice.Value
+            var hasDiscount =
+                item.Product.DiscountPrice.HasValue &&
+                item.Product.DiscountPrice.Value > 0 &&
+                item.Product.DiscountPrice.Value < item.Product.Price;
+
+            var price = hasDiscount
+                ? item.Product.DiscountPrice!.Value
                 : item.Product.Price;
 
-            sb.AppendLine($"Məhsul: {item.Product.Name}");
-            sb.AppendLine($"Kod: {item.Product.ProductCode}");
-            sb.AppendLine($"Razmer: {item.ProductVariant.Size.Value}");
-            sb.AppendLine($"Rəng: {item.ProductVariant.Color.Name}");
-            sb.AppendLine($"Say: {item.Quantity}");
-            sb.AppendLine($"Qiymət: {price} AZN");
-            sb.AppendLine($"Link: {productLink}");
-            sb.AppendLine();
+            message.AppendLine($"Məhsul: {item.Product.Name}");
+            message.AppendLine($"Kod: {item.Product.ProductCode}");
+            message.AppendLine($"Razmer: {item.ProductVariant.Size.Value}");
+            message.AppendLine($"Rəng: {item.ProductVariant.Color.Name}");
+            message.AppendLine($"Say: {item.Quantity}");
+            message.AppendLine($"Qiymət: {price:0.##} AZN");
+            message.AppendLine($"Link: {productLink}");
+            message.AppendLine();
         }
 
-        var encodedMessage = Uri.EscapeDataString(sb.ToString());
-
-        var url = $"https://wa.me/{storeInfo.WhatsAppNumber}?text={encodedMessage}";
+        var url = BuildWhatsAppUrl(phoneNumber, message.ToString());
 
         _context.WhatsAppClickLogs.Add(new WhatsAppClickLog
         {
