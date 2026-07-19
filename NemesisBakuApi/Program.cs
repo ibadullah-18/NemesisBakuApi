@@ -1,10 +1,10 @@
+using FluentValidation;
 using FluentValidation.AspNetCore;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
+using Microsoft.AspNetCore.Http.Features;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.IdentityModel.Tokens;
-using FluentValidation;
-using NemesisBakuApi.Validations;
 using Microsoft.OpenApi;
 using Microsoft.OpenApi.Models;
 using NemesisBakuApi.Data;
@@ -14,9 +14,25 @@ using NemesisBakuApi.Middlewares;
 using NemesisBakuApi.Services.Implementations;
 using NemesisBakuApi.Services.Interfaces;
 using NemesisBakuApi.Settings;
+using NemesisBakuApi.Validations;
 using System.Text;
 
 var builder = WebApplication.CreateBuilder(args);
+
+// Ümumi request/upload limiti: 60 MB
+const long MaxUploadRequestBytes = 60L * 1024 * 1024;
+
+// Kestrel request limiti
+builder.WebHost.ConfigureKestrel(options =>
+{
+    options.Limits.MaxRequestBodySize = MaxUploadRequestBytes;
+});
+
+// Multipart/form-data limiti
+builder.Services.Configure<FormOptions>(options =>
+{
+    options.MultipartBodyLengthLimit = MaxUploadRequestBytes;
+});
 
 builder.Services.AddControllers();
 
@@ -90,17 +106,16 @@ builder.Services
     .AddEntityFrameworkStores<AppDbContext>()
     .AddDefaultTokenProviders();
 
-#region service
+#region Services
+
 builder.Services.AddScoped<JwtTokenGenerator>();
 builder.Services.AddScoped<IFileService, CloudinaryFileService>();
 builder.Services.AddValidatorsFromAssemblyContaining<ProductCreateDtoValidator>();
 builder.Services.AddScoped<IAuditLogService, AuditLogService>();
 builder.Services.AddScoped<IEmailService, EmailService>();
 builder.Services.AddScoped<IEmailTemplateService, EmailTemplateService>();
-builder.Services.AddScoped<IEmailService, EmailService>();
+
 #endregion
-
-
 
 var jwtSettings = builder.Configuration.GetSection("Jwt");
 
@@ -109,9 +124,14 @@ var key = Encoding.UTF8.GetBytes(jwtSettings["Key"]!);
 builder.Services
     .AddAuthentication(options =>
     {
-        options.DefaultAuthenticateScheme = JwtBearerDefaults.AuthenticationScheme;
-        options.DefaultChallengeScheme = JwtBearerDefaults.AuthenticationScheme;
-        options.DefaultScheme = JwtBearerDefaults.AuthenticationScheme;
+        options.DefaultAuthenticateScheme =
+            JwtBearerDefaults.AuthenticationScheme;
+
+        options.DefaultChallengeScheme =
+            JwtBearerDefaults.AuthenticationScheme;
+
+        options.DefaultScheme =
+            JwtBearerDefaults.AuthenticationScheme;
     })
     .AddJwtBearer(options =>
     {
@@ -173,8 +193,8 @@ using (var scope = app.Services.CreateScope())
     // Bütün migration-ları avtomatik tətbiq et
     await db.Database.MigrateAsync();
 
-    // Sonra rolları və super admini yarat
+    // Rolları və super admini yarat
     await DbSeeder.SeedRolesAsync(services);
-} 
+}
 
 app.Run();

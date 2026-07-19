@@ -10,8 +10,8 @@ namespace NemesisBakuApi.Services.Implementations;
 
 public class CloudinaryFileService : IFileService
 {
-    private const long MaxStandardImageBytes = 10 * 1024 * 1024;
-    private const long MaxHeicImageBytes = 25 * 1024 * 1024;
+    private const long MaxStandardImageBytes = 25L * 1024 * 1024; // 25 MB
+    private const long MaxHeicImageBytes = 50L * 1024 * 1024;     // 50 MB
 
     private static readonly HashSet<string> StandardExtensions =
         new(StringComparer.OrdinalIgnoreCase)
