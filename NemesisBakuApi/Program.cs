@@ -35,6 +35,7 @@ builder.Services.Configure<FormOptions>(options =>
 });
 
 builder.Services.AddControllers();
+builder.Services.AddHealthChecks();
 
 builder.Services.Configure<WhatsAppSettings>(
     builder.Configuration.GetSection("WhatsApp"));
@@ -183,6 +184,7 @@ app.UseAuthentication();
 app.UseAuthorization();
 
 app.MapControllers();
+app.MapHealthChecks("/health");
 
 using (var scope = app.Services.CreateScope())
 {
