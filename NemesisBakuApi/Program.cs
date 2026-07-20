@@ -16,19 +16,18 @@ using NemesisBakuApi.Services.Interfaces;
 using NemesisBakuApi.Settings;
 using NemesisBakuApi.Validations;
 using System.Text;
+using Microsoft.AspNetCore.Http.Features;
 
 var builder = WebApplication.CreateBuilder(args);
 
-// Ümumi request/upload limiti: 60 MB
-const long MaxUploadRequestBytes = 60L * 1024 * 1024;
+// Bir HTTP request daxilində bütün faylların ümumi maksimum ölçüsü: 200 MB
+const long MaxUploadRequestBytes = 200L * 1024 * 1024;
 
-// Kestrel request limiti
 builder.WebHost.ConfigureKestrel(options =>
 {
     options.Limits.MaxRequestBodySize = MaxUploadRequestBytes;
 });
 
-// Multipart/form-data limiti
 builder.Services.Configure<FormOptions>(options =>
 {
     options.MultipartBodyLengthLimit = MaxUploadRequestBytes;
