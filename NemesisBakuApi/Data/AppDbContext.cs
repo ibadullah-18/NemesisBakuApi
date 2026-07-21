@@ -59,10 +59,6 @@ public class AppDbContext : IdentityDbContext<AppUser, IdentityRole<Guid>, Guid>
         base.OnModelCreating(builder);
 
         builder.Entity<Product>()
-            .HasIndex(x => x.ProductCode)
-            .IsUnique();
-
-        builder.Entity<Product>()
             .Property(x => x.Price)
             .HasColumnType("decimal(18,2)");
 

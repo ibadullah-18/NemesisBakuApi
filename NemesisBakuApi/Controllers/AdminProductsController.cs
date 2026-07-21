@@ -46,10 +46,6 @@ public class AdminProductsController : ControllerBase
         if (!brandExists)
             return BadRequest(ApiResponse<string>.Fail("Brend tapılmadı"));
 
-        var codeExists = await _context.Products.AnyAsync(x => x.ProductCode == dto.ProductCode);
-        if (codeExists)
-            return BadRequest(ApiResponse<string>.Fail("Bu məhsul kodu artıq mövcuddur"));
-
         if (dto.Variants == null || !dto.Variants.Any())
             return BadRequest(ApiResponse<string>.Fail("Ən azı bir razmer/rəng/stok əlavə olunmalıdır"));
 
@@ -213,12 +209,6 @@ public class AdminProductsController : ControllerBase
         var brandExists = await _context.Brands.AnyAsync(x => x.Id == dto.BrandId);
         if (!brandExists)
             return BadRequest(ApiResponse<string>.Fail("Brend tapılmadı"));
-
-        var codeExists = await _context.Products
-            .AnyAsync(x => x.ProductCode == dto.ProductCode && x.Id != id);
-
-        if (codeExists)
-            return BadRequest(ApiResponse<string>.Fail("Bu məhsul kodu artıq mövcuddur"));
 
         product.Name = dto.Name;
         product.Description = dto.Description;
