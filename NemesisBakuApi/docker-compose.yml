@@ -43,12 +43,6 @@
       Email__Accounts__2__Password: "${EMAIL_2_PASSWORD}"
       Email__Accounts__3__Password: "${EMAIL_3_PASSWORD}"
       Email__Accounts__4__Password: "${EMAIL_4_PASSWORD}"
-      Telegram__Enabled: "${TELEGRAM_ENABLED:-true}"
-      Telegram__BotToken: "${TELEGRAM_BOT_TOKEN}"
-      Telegram__WebhookSecret: "${TELEGRAM_WEBHOOK_SECRET}"
-      Telegram__BotUsername: "${TELEGRAM_BOT_USERNAME:-nemesisbakuMonitorBot}"
-      Telegram__PublicBaseUrl: "${TELEGRAM_PUBLIC_BASE_URL:-https://nemesisbaku.az}"
-      Telegram__SiteBaseUrl: "${TELEGRAM_SITE_BASE_URL:-https://nemesisbaku.az}"
     ports:
       - "8080:8080"
     volumes:
