@@ -11,6 +11,11 @@ public class AppUser : IdentityUser<Guid>
 
     public string? LoyaltyCardCode { get; set; }
 
+    public long? TelegramChatId { get; set; }
+    public string? TelegramUsername { get; set; }
+    public bool TelegramNotificationsEnabled { get; set; } = false;
+    public DateTime? TelegramLinkedAt { get; set; }
+
     public bool IsActive { get; set; } = true;
     public bool IsDeleted { get; set; } = false;
 
@@ -26,4 +31,5 @@ public class AppUser : IdentityUser<Guid>
     public ICollection<Favorite> Favorites { get; set; } = new List<Favorite>();
     public ICollection<Order> Orders { get; set; } = new List<Order>();
     public ICollection<UserAddress> Addresses { get; set; } = new List<UserAddress>();
+    public ICollection<TelegramOrderNotification> TelegramOrderNotifications { get; set; } = new List<TelegramOrderNotification>();
 }

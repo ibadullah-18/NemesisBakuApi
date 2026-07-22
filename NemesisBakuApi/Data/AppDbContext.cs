@@ -53,6 +53,7 @@ public class AppDbContext : IdentityDbContext<AppUser, IdentityRole<Guid>, Guid>
     public DbSet<EmailAnnouncement> EmailAnnouncements { get; set; }
     public DbSet<BasketLowStockEmailLog> BasketLowStockEmailLogs { get; set; }
     public DbSet<CourierPhone> CourierPhones { get; set; }
+    public DbSet<TelegramOrderNotification> TelegramOrderNotifications { get; set; }
 
     protected override void OnModelCreating(ModelBuilder builder)
     {
@@ -261,6 +262,33 @@ public class AppDbContext : IdentityDbContext<AppUser, IdentityRole<Guid>, Guid>
             .HasQueryFilter(x => !x.IsDeleted);
 
         builder.Entity<CourierPhone>()
+            .HasQueryFilter(x => !x.IsDeleted);
+
+        builder.Entity<AppUser>()
+            .HasIndex(x => x.TelegramChatId)
+            .IsUnique()
+            .HasFilter("[TelegramChatId] IS NOT NULL");
+
+        builder.Entity<TelegramOrderNotification>()
+            .HasIndex(x => new { x.OrderId, x.AdminUserId })
+            .IsUnique();
+
+        builder.Entity<TelegramOrderNotification>()
+            .HasIndex(x => new { x.SentAt, x.NextAttemptAt, x.AttemptCount });
+
+        builder.Entity<TelegramOrderNotification>()
+            .HasOne(x => x.Order)
+            .WithMany(x => x.TelegramNotifications)
+            .HasForeignKey(x => x.OrderId)
+            .OnDelete(DeleteBehavior.NoAction);
+
+        builder.Entity<TelegramOrderNotification>()
+            .HasOne(x => x.AdminUser)
+            .WithMany(x => x.TelegramOrderNotifications)
+            .HasForeignKey(x => x.AdminUserId)
+            .OnDelete(DeleteBehavior.NoAction);
+
+        builder.Entity<TelegramOrderNotification>()
             .HasQueryFilter(x => !x.IsDeleted);
     }
 }

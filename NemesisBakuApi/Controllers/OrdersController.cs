@@ -10,7 +10,6 @@ using NemesisBakuApi.Helpers;
 using NemesisBakuApi.Services.Interfaces;
 using NemesisBakuApi.Settings;
 using System.Security.Claims;
-using System.Text;
 
 namespace NemesisBakuApi.Controllers;
 
@@ -21,13 +20,16 @@ public class OrdersController : ControllerBase
 {
     private readonly AppDbContext _context;
     private readonly DeliverySettings _deliverySettings;
+    private readonly ITelegramOrderNotificationOutbox _telegramOutbox;
 
     public OrdersController(
         AppDbContext context,
-        IOptions<DeliverySettings> deliveryOptions)
+        IOptions<DeliverySettings> deliveryOptions,
+        ITelegramOrderNotificationOutbox telegramOutbox)
     {
         _context = context;
         _deliverySettings = deliveryOptions.Value;
+        _telegramOutbox = telegramOutbox;
     }
 
     private Guid GetUserId()
@@ -301,12 +303,12 @@ public class OrdersController : ControllerBase
 
         _context.Orders.Add(order);
 
+        await _telegramOutbox.EnqueueAsync(
+            order,
+            HttpContext.RequestAborted);
+
         await _context.SaveChangesAsync();
         await transaction.CommitAsync();
-
-        var message = BuildOrderWhatsAppMessage(order);
-
-        await _context.SaveChangesAsync();
 
         return Ok(ApiResponse<Guid>.Ok(order.Id, "Sifariş uğurla yaradıldı"));
     }
@@ -405,73 +407,6 @@ public class OrdersController : ControllerBase
         };
 
         return Ok(ApiResponse<OrderDetailDto>.Ok(dto));
-    }
-
-    private string BuildOrderWhatsAppMessage(Order order)
-    {
-        var sb = new StringBuilder();
-
-        sb.AppendLine("Yeni sifariş var");
-        sb.AppendLine($"Sifariş nömrəsi: {order.OrderNumber}");
-        sb.AppendLine($"Müştəri: {order.CustomerFullName}");
-        sb.AppendLine($"Telefon: {order.CustomerPhoneNumber}");
-        sb.AppendLine();
-
-        sb.AppendLine("Məhsullar:");
-
-        foreach (var item in order.Items)
-        {
-            sb.AppendLine($"- {item.ProductName}");
-            sb.AppendLine($"  Kod: {item.ProductCode}");
-            sb.AppendLine($"  Razmer: {item.SizeValue}");
-            sb.AppendLine($"  Rəng: {item.ColorName}");
-            sb.AppendLine($"  Say: {item.Quantity}");
-            sb.AppendLine($"  Qiymət: {item.UnitPrice} AZN");
-            sb.AppendLine($"  Link: {item.ProductLink}");
-            sb.AppendLine();
-        }
-
-        sb.AppendLine($"Məhsulların cəmi: {order.TotalProductPrice} AZN");
-
-        if (order.PromoDiscountAmount > 0)
-        {
-            sb.AppendLine($"Promo endirim: -{order.PromoDiscountAmount} AZN");
-        }
-
-        sb.AppendLine($"Çatdırılma: {order.DeliveryPrice} AZN");
-        sb.AppendLine($"Yekun: {order.TotalPrice} AZN");
-        sb.AppendLine();
-
-        sb.AppendLine($"Çatdırılma tipi: {order.DeliveryType}");
-        sb.AppendLine($"Ödəniş: {order.PaymentMethod}");
-
-        if (order.DeliveryType == DeliveryType.HomeDelivery)
-        {
-            sb.AppendLine($"Ünvan: {order.AddressText}");
-            sb.AppendLine($"Məsafə: {order.DeliveryDistanceKm} km");
-            sb.AppendLine($"Bina/Blok: {order.BuildingNumber}");
-            sb.AppendLine($"Mərtəbə: {order.Floor}");
-            sb.AppendLine($"Mənzil: {order.Apartment}");
-            sb.AppendLine($"Tarix: {order.DeliveryDate:dd.MM.yyyy}");
-            sb.AppendLine($"Saat: {order.DeliveryTimeRange}");
-
-            if (order.Latitude.HasValue && order.Longitude.HasValue)
-            {
-                sb.AppendLine($"Konum: https://www.google.com/maps?q={order.Latitude},{order.Longitude}");
-            }
-        }
-        else
-        {
-            sb.AppendLine("Təhvil alma: Mağazadan götürüləcək");
-        }
-
-        if (!string.IsNullOrWhiteSpace(order.Note))
-        {
-            sb.AppendLine();
-            sb.AppendLine($"Qeyd: {order.Note}");
-        }
-
-        return sb.ToString();
     }
 
     [HttpPost("calculate-delivery")]

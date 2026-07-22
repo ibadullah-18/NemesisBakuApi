@@ -16,7 +16,6 @@ using NemesisBakuApi.Services.Interfaces;
 using NemesisBakuApi.Settings;
 using NemesisBakuApi.Validations;
 using System.Text;
-using Microsoft.AspNetCore.Http.Features;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -47,6 +46,9 @@ builder.Services.Configure<DeliverySettings>(
 
 builder.Services.Configure<EmailSettings>(
     builder.Configuration.GetSection("Email"));
+
+builder.Services.Configure<TelegramSettings>(
+    builder.Configuration.GetSection(TelegramSettings.SectionName));
 
 builder.Services.AddHttpClient();
 
@@ -114,6 +116,10 @@ builder.Services.AddValidatorsFromAssemblyContaining<ProductCreateDtoValidator>(
 builder.Services.AddScoped<IAuditLogService, AuditLogService>();
 builder.Services.AddScoped<IEmailService, EmailService>();
 builder.Services.AddScoped<IEmailTemplateService, EmailTemplateService>();
+builder.Services.AddHttpClient<ITelegramBotService, TelegramBotService>();
+builder.Services.AddScoped<ITelegramOrderNotificationOutbox, TelegramOrderNotificationOutbox>();
+builder.Services.AddHostedService<TelegramOrderNotificationWorker>();
+builder.Services.AddHostedService<TelegramWebhookSetupService>();
 
 #endregion
 
