@@ -41,7 +41,7 @@ public static class DbSeeder
         }
 
         const string superAdminFullName = "Eltac Məmmədov";
-        const string superAdminPhone = "994775131331";
+        const string superAdminPhone = "994705131331";
         const string superAdminEmail = "eltcmmdv13@mail.ru";
 
         // Təhlükəsizlik üçün bunu sonradan environment variable-a keçir.
