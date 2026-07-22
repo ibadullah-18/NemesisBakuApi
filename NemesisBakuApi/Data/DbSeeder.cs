@@ -28,9 +28,9 @@ public static class DbSeeder
             }
         }
 
-        var superAdminPhone = "994506151345";
+        var superAdminPhone = "994775131331";
         var superAdminEmail = "superadmin@nemesisbaku.az";
-        var superAdminPassword = "Ibo!2007";
+        var superAdminPassword = "Eltac13!13";
 
         var superAdmin = await userManager.FindByNameAsync(superAdminPhone);
 
@@ -38,7 +38,7 @@ public static class DbSeeder
         {
             superAdmin = new AppUser
             {
-                FullName = "NemesisBaku Super Admin",
+                FullName = "Eltac Məmmədov",
                 UserName = superAdminPhone,
                 PhoneNumber = superAdminPhone,
                 Email = superAdminEmail,
