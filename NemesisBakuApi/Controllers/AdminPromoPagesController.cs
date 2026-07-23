@@ -58,7 +58,10 @@ public class AdminPromoPagesController : ControllerBase
         }
 
         if (dto.File == null || dto.File.Length == 0)
-            return BadRequest(ApiResponse<string>.Fail("Promo şəkli seçilməlidir"));
+            return BadRequest(ApiResponse<string>.Fail("Kompüter promo şəkli seçilməlidir"));
+
+        if (dto.MobileFile == null || dto.MobileFile.Length == 0)
+            return BadRequest(ApiResponse<string>.Fail("Mobil promo şəkli seçilməlidir"));
 
         if (dto.StartDate == default)
             return BadRequest(ApiResponse<string>.Fail("Başlama tarixi seçilməlidir"));
@@ -75,12 +78,19 @@ public class AdminPromoPagesController : ControllerBase
         if (dto.IsActive && await HasReachedActiveLimitAsync(dto.Type))
             return ActiveLimitError(dto.Type);
 
-        string? uploadedImageUrl = null;
+        string? uploadedDesktopImageUrl = null;
+        string? uploadedMobileImageUrl = null;
         PromoPage promoPage;
 
         try
         {
-            uploadedImageUrl = await _fileService.UploadImageAsync(dto.File!, "promo-pages");
+            uploadedDesktopImageUrl = await _fileService.UploadImageAsync(
+                dto.File!,
+                "promo-pages/desktop");
+
+            uploadedMobileImageUrl = await _fileService.UploadImageAsync(
+                dto.MobileFile!,
+                "promo-pages/mobile");
 
             promoPage = new PromoPage
             {
@@ -89,7 +99,8 @@ public class AdminPromoPagesController : ControllerBase
                 Title = $"promo-{Guid.NewGuid():N}",
                 Description = string.Empty,
                 Type = dto.Type,
-                ImageUrl = uploadedImageUrl,
+                ImageUrl = uploadedDesktopImageUrl,
+                MobileImageUrl = uploadedMobileImageUrl,
                 StartDate = ToUtc(dto.StartDate),
                 EndDate = NoExpiryDate,
                 IsActive = dto.IsActive
@@ -111,8 +122,11 @@ public class AdminPromoPagesController : ControllerBase
         }
         catch
         {
-            if (!string.IsNullOrWhiteSpace(uploadedImageUrl))
-                await TryDeleteImageAsync(uploadedImageUrl);
+            if (!string.IsNullOrWhiteSpace(uploadedDesktopImageUrl))
+                await TryDeleteImageAsync(uploadedDesktopImageUrl);
+
+            if (!string.IsNullOrWhiteSpace(uploadedMobileImageUrl))
+                await TryDeleteImageAsync(uploadedMobileImageUrl);
 
             throw;
         }
@@ -182,16 +196,53 @@ public class AdminPromoPagesController : ControllerBase
             return ActiveLimitError(promoPage.Type);
         }
 
-        string? newImageUrl = null;
-        var oldImageUrl = promoPage.ImageUrl;
+        var oldDesktopImageUrl = promoPage.ImageUrl;
+        var oldMobileImageUrl = promoPage.MobileImageUrl;
+        var mobileUsesDesktopFallback =
+            !string.IsNullOrWhiteSpace(oldDesktopImageUrl) &&
+            string.Equals(
+                oldMobileImageUrl,
+                oldDesktopImageUrl,
+                StringComparison.Ordinal);
+
+        if ((dto.File == null || dto.File.Length == 0) &&
+            string.IsNullOrWhiteSpace(oldDesktopImageUrl))
+        {
+            return BadRequest(ApiResponse<string>.Fail("Kompüter promo şəkli seçilməlidir"));
+        }
+
+        if ((dto.MobileFile == null || dto.MobileFile.Length == 0) &&
+            string.IsNullOrWhiteSpace(oldMobileImageUrl))
+        {
+            return BadRequest(ApiResponse<string>.Fail("Mobil promo şəkli seçilməlidir"));
+        }
+
+        string? newDesktopImageUrl = null;
+        string? newMobileImageUrl = null;
 
         try
         {
             // Yeni şəkil əvvəl yüklənir. Upload uğursuz olsa köhnə şəkil itmir.
             if (dto.File != null && dto.File.Length > 0)
-                newImageUrl = await _fileService.UploadImageAsync(dto.File, "promo-pages");
+            {
+                newDesktopImageUrl = await _fileService.UploadImageAsync(
+                    dto.File,
+                    "promo-pages/desktop");
+            }
 
-            promoPage.ImageUrl = newImageUrl ?? oldImageUrl;
+            if (dto.MobileFile != null && dto.MobileFile.Length > 0)
+            {
+                newMobileImageUrl = await _fileService.UploadImageAsync(
+                    dto.MobileFile,
+                    "promo-pages/mobile");
+            }
+
+            promoPage.ImageUrl = newDesktopImageUrl ?? oldDesktopImageUrl;
+            promoPage.MobileImageUrl =
+                newMobileImageUrl ??
+                (mobileUsesDesktopFallback && newDesktopImageUrl != null
+                    ? newDesktopImageUrl
+                    : oldMobileImageUrl);
             promoPage.StartDate = ToUtc(dto.StartDate);
             promoPage.EndDate = NoExpiryDate;
             promoPage.IsActive = dto.IsActive;
@@ -220,23 +271,37 @@ public class AdminPromoPagesController : ControllerBase
         }
         catch
         {
-            if (!string.IsNullOrWhiteSpace(newImageUrl))
-                await TryDeleteImageAsync(newImageUrl);
+            if (!string.IsNullOrWhiteSpace(newDesktopImageUrl))
+                await TryDeleteImageAsync(newDesktopImageUrl);
+
+            if (!string.IsNullOrWhiteSpace(newMobileImageUrl))
+                await TryDeleteImageAsync(newMobileImageUrl);
 
             throw;
         }
 
-        if (!string.IsNullOrWhiteSpace(newImageUrl) &&
-            !string.IsNullOrWhiteSpace(oldImageUrl))
+        var currentImageUrls = new HashSet<string>(
+            new[] { promoPage.ImageUrl, promoPage.MobileImageUrl }
+                .Where(x => !string.IsNullOrWhiteSpace(x))
+                .Select(x => x!),
+            StringComparer.Ordinal);
+
+        var oldImageUrls = new[] { oldDesktopImageUrl, oldMobileImageUrl }
+            .Where(x => !string.IsNullOrWhiteSpace(x))
+            .Select(x => x!)
+            .Distinct(StringComparer.Ordinal);
+
+        foreach (var oldImageUrl in oldImageUrls)
         {
-            await TryDeleteImageAsync(oldImageUrl);
+            if (!currentImageUrls.Contains(oldImageUrl))
+                await TryDeleteImageAsync(oldImageUrl);
         }
 
         await WriteAuditLogAsync(
             "Update",
             "PromoPage",
             promoPage.Id.ToString(),
-            $"Promo yeniləndi. Active: {promoPage.IsActive}. ProductCount: {productIds.Count}. ImageChanged: {newImageUrl != null}");
+            $"Promo yeniləndi. Active: {promoPage.IsActive}. ProductCount: {productIds.Count}. DesktopImageChanged: {newDesktopImageUrl != null}. MobileImageChanged: {newMobileImageUrl != null}");
 
         return Ok(ApiResponse<string>.Ok("Promo yeniləndi"));
     }
@@ -279,6 +344,7 @@ public class AdminPromoPagesController : ControllerBase
             Id = x.Id,
             Type = x.Type,
             ImageUrl = x.ImageUrl,
+            MobileImageUrl = x.MobileImageUrl,
             StartDate = x.StartDate,
             IsActive = x.IsActive,
             ProductIds = x.Products

@@ -8,6 +8,7 @@ public class PromoPageDto
     public Guid Id { get; set; }
     public PromoPageType Type { get; set; }
     public string? ImageUrl { get; set; }
+    public string MobileImageUrl { get; set; } = null!;
     public DateTime StartDate { get; set; }
     public bool IsActive { get; set; }
     public List<Guid> ProductIds { get; set; } = new();

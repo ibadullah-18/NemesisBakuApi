@@ -42,6 +42,7 @@ public class PromoPagesController : ControllerBase
                 x.Description,
                 x.Type,
                 x.ImageUrl,
+                x.MobileImageUrl,
                 x.StartDate,
                 x.EndDate
             })
@@ -107,6 +108,7 @@ public class PromoPagesController : ControllerBase
             promoPage.Description,
             promoPage.Type,
             promoPage.ImageUrl,
+            promoPage.MobileImageUrl,
             Products = products
         };
 

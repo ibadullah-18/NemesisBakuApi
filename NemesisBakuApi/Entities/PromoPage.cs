@@ -10,6 +10,7 @@ public class PromoPage : BaseEntity
     public PromoPageType Type { get; set; }
 
     public string? ImageUrl { get; set; }
+    public string MobileImageUrl { get; set; } = null!;
 
     public DateTime StartDate { get; set; }
     public DateTime EndDate { get; set; }
