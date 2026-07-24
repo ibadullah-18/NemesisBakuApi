@@ -48,7 +48,7 @@ public class AdminPromoPagesController : ControllerBase
 
         return parsedUserId;
     }
-
+    // edit
     [HttpPost]
     [Consumes("multipart/form-data")]
     public async Task<IActionResult> Create([FromForm] PromoPageCreateDto dto)
