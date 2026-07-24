@@ -17,6 +17,8 @@ namespace NemesisBakuApi.Controllers;
 public class AdminPromoPagesController : ControllerBase
 {
     private const int MaxActivePromosPerType = 5;
+    private const long MaxPromoRequestBytes = 200L * 1024 * 1024;
+    private const long MaxCloudinaryImageBytes = 10L * 1024 * 1024;
 
     // Mövcud cədvəldə EndDate sütunu saxlanılır, amma artıq admin formunda
     // idarə olunmur. Bu tarix promo üçün praktik olaraq "müddətsiz" deməkdir.
@@ -62,6 +64,19 @@ public class AdminPromoPagesController : ControllerBase
 
         if (dto.MobileFile == null || dto.MobileFile.Length == 0)
             return BadRequest(ApiResponse<string>.Fail("Mobil promo şəkli seçilməlidir"));
+
+        if (dto.File.Length + dto.MobileFile.Length > MaxPromoRequestBytes)
+        {
+            return BadRequest(ApiResponse<string>.Fail(
+                "Kompüter və mobil şəkillərinin ümumi həcmi maksimum 200 MB ola bilər"));
+        }
+
+        var imageSizeError = ValidateCloudinaryImageSizes(
+            dto.File,
+            dto.MobileFile);
+
+        if (imageSizeError != null)
+            return imageSizeError;
 
         if (dto.StartDate == default)
             return BadRequest(ApiResponse<string>.Fail("Başlama tarixi seçilməlidir"));
@@ -119,6 +134,16 @@ public class AdminPromoPagesController : ControllerBase
 
             _context.PromoPages.Add(promoPage);
             await _context.SaveChangesAsync();
+        }
+        catch (InvalidOperationException ex)
+        {
+            if (!string.IsNullOrWhiteSpace(uploadedDesktopImageUrl))
+                await TryDeleteImageAsync(uploadedDesktopImageUrl);
+
+            if (!string.IsNullOrWhiteSpace(uploadedMobileImageUrl))
+                await TryDeleteImageAsync(uploadedMobileImageUrl);
+
+            return BadRequest(ApiResponse<string>.Fail(ex.Message));
         }
         catch
         {
@@ -217,6 +242,23 @@ public class AdminPromoPagesController : ControllerBase
             return BadRequest(ApiResponse<string>.Fail("Mobil promo şəkli seçilməlidir"));
         }
 
+        var selectedFilesTotal =
+            (dto.File?.Length ?? 0) +
+            (dto.MobileFile?.Length ?? 0);
+
+        if (selectedFilesTotal > MaxPromoRequestBytes)
+        {
+            return BadRequest(ApiResponse<string>.Fail(
+                "Seçilən kompüter və mobil şəkillərinin ümumi həcmi maksimum 200 MB ola bilər"));
+        }
+
+        var imageSizeError = ValidateCloudinaryImageSizes(
+            dto.File,
+            dto.MobileFile);
+
+        if (imageSizeError != null)
+            return imageSizeError;
+
         string? newDesktopImageUrl = null;
         string? newMobileImageUrl = null;
 
@@ -268,6 +310,16 @@ public class AdminPromoPagesController : ControllerBase
             }
 
             await _context.SaveChangesAsync();
+        }
+        catch (InvalidOperationException ex)
+        {
+            if (!string.IsNullOrWhiteSpace(newDesktopImageUrl))
+                await TryDeleteImageAsync(newDesktopImageUrl);
+
+            if (!string.IsNullOrWhiteSpace(newMobileImageUrl))
+                await TryDeleteImageAsync(newMobileImageUrl);
+
+            return BadRequest(ApiResponse<string>.Fail(ex.Message));
         }
         catch
         {
@@ -395,6 +447,25 @@ public class AdminPromoPagesController : ControllerBase
             : "Eyni anda maksimum 5 aktiv banner ola bilər";
 
         return BadRequest(ApiResponse<string>.Fail(message));
+    }
+
+    private IActionResult? ValidateCloudinaryImageSizes(
+        IFormFile? desktopFile,
+        IFormFile? mobileFile)
+    {
+        if (desktopFile?.Length > MaxCloudinaryImageBytes)
+        {
+            return BadRequest(ApiResponse<string>.Fail(
+                "Kompüter şəkli 10 MB-dan böyükdür. Səhifəni yeniləyib şəkli təkrar seçin; sayt onu avtomatik optimallaşdıracaq."));
+        }
+
+        if (mobileFile?.Length > MaxCloudinaryImageBytes)
+        {
+            return BadRequest(ApiResponse<string>.Fail(
+                "Telefon şəkli 10 MB-dan böyükdür. Səhifəni yeniləyib şəkli təkrar seçin; sayt onu avtomatik optimallaşdıracaq."));
+        }
+
+        return null;
     }
 
     private static DateTime ToUtc(DateTime value)
