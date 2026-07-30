@@ -237,10 +237,29 @@ public class AdminProductsController : ControllerBase
     [HttpDelete("{id}")]
     public async Task<IActionResult> Delete(Guid id)
     {
-        var product = await _context.Products.FirstOrDefaultAsync(x => x.Id == id);
+        var product = await _context.Products
+            .Include(x => x.Images)
+            .FirstOrDefaultAsync(x => x.Id == id);
 
         if (product == null)
             return NotFound(ApiResponse<string>.Fail("Məhsul tapılmadı"));
+
+        var imageUrls = product.Images
+            .Where(x => !string.IsNullOrWhiteSpace(x.ImageUrl))
+            .Select(x => x.ImageUrl)
+            .Distinct(StringComparer.Ordinal)
+            .ToList();
+
+        foreach (var imageUrl in imageUrls)
+        {
+            await _fileService.DeleteImageAsync(imageUrl);
+        }
+
+        foreach (var image in product.Images)
+        {
+            image.IsDeleted = true;
+            image.UpdatedAt = DateTime.UtcNow;
+        }
 
         product.IsDeleted = true;
         product.UpdatedAt = DateTime.UtcNow;

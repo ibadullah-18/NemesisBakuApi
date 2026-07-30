@@ -19,15 +19,18 @@ public class AdminUsersController : ControllerBase
     private readonly AppDbContext _context;
     private readonly UserManager<AppUser> _userManager;
     private readonly IAuditLogService _auditLogService;
+    private readonly IFileService _fileService;
 
     public AdminUsersController(
-    AppDbContext context,
-    UserManager<AppUser> userManager,
-    IAuditLogService auditLogService)
+        AppDbContext context,
+        UserManager<AppUser> userManager,
+        IAuditLogService auditLogService,
+        IFileService fileService)
     {
         _context = context;
         _userManager = userManager;
         _auditLogService = auditLogService;
+        _fileService = fileService;
     }
 
     [HttpGet]
@@ -228,7 +231,7 @@ public class AdminUsersController : ControllerBase
         await _userManager.UpdateAsync(user);
 
         await WriteAuditLogAsync(
-            "ActivateUser", 
+            "ActivateUser",
             "User",
             user.Id.ToString(),
             $"İstifadəçi aktiv edildi: {user.FullName}");
@@ -248,6 +251,12 @@ public class AdminUsersController : ControllerBase
 
         if (roles.Contains("SuperAdmin"))
             return BadRequest(ApiResponse<string>.Fail("SuperAdmin silinə bilməz"));
+
+        if (!string.IsNullOrWhiteSpace(user.ProfileImageUrl))
+        {
+            await _fileService.DeleteImageAsync(user.ProfileImageUrl);
+            user.ProfileImageUrl = null;
+        }
 
         user.IsDeleted = true;
         user.IsActive = false;

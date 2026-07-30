@@ -48,7 +48,7 @@ public class AdminPromoPagesController : ControllerBase
 
         return parsedUserId;
     }
-    // edit
+
     [HttpPost]
     [Consumes("multipart/form-data")]
     public async Task<IActionResult> Create([FromForm] PromoPageCreateDto dto)
@@ -367,6 +367,17 @@ public class AdminPromoPagesController : ControllerBase
 
         if (promoPage == null)
             return NotFound(ApiResponse<string>.Fail("Promo tapılmadı"));
+
+        var imageUrls = new[] { promoPage.ImageUrl, promoPage.MobileImageUrl }
+            .Where(x => !string.IsNullOrWhiteSpace(x))
+            .Select(x => x!)
+            .Distinct(StringComparer.Ordinal)
+            .ToList();
+
+        foreach (var imageUrl in imageUrls)
+        {
+            await _fileService.DeleteImageAsync(imageUrl);
+        }
 
         promoPage.IsDeleted = true;
         promoPage.IsActive = false;
