@@ -32,10 +32,13 @@ public class AdminOrdersController : ControllerBase
 
     private Guid GetUserId()
     {
-        var userId = User.FindFirstValue(ClaimTypes.NameIdentifier);
+        var userId = User.FindFirstValue(
+            ClaimTypes.NameIdentifier);
 
         if (string.IsNullOrWhiteSpace(userId))
+        {
             throw new UnauthorizedAccessException();
+        }
 
         return Guid.Parse(userId);
     }
@@ -45,28 +48,49 @@ public class AdminOrdersController : ControllerBase
         [FromQuery] OrderStatus? status,
         [FromQuery] string? search,
         [FromQuery] int page = 1,
-        [FromQuery] int pageSize = 20)
+        [FromQuery] int pageSize = 20,
+        CancellationToken cancellationToken = default)
     {
-        if (page <= 0) page = 1;
-        if (pageSize <= 0) pageSize = 20;
-        if (pageSize > 100) pageSize = 100;
+        if (page <= 0)
+        {
+            page = 1;
+        }
 
-        var query = _context.Orders.AsQueryable();
+        if (pageSize <= 0)
+        {
+            pageSize = 20;
+        }
+
+        if (pageSize > 100)
+        {
+            pageSize = 100;
+        }
+
+        var query = _context.Orders
+            .AsNoTracking()
+            .AsQueryable();
 
         if (status.HasValue)
-            query = query.Where(x => x.Status == status.Value);
+        {
+            query = query.Where(
+                x => x.Status == status.Value);
+        }
 
         if (!string.IsNullOrWhiteSpace(search))
         {
-            var s = search.Trim().ToLower();
+            var searchValue = search.Trim().ToLower();
 
             query = query.Where(x =>
-                x.OrderNumber.ToLower().Contains(s) ||
-                x.CustomerFullName.ToLower().Contains(s) ||
-                x.CustomerPhoneNumber.ToLower().Contains(s));
+                x.OrderNumber.ToLower()
+                    .Contains(searchValue) ||
+                x.CustomerFullName.ToLower()
+                    .Contains(searchValue) ||
+                x.CustomerPhoneNumber.ToLower()
+                    .Contains(searchValue));
         }
 
-        var totalCount = await query.CountAsync();
+        var totalCount = await query.CountAsync(
+            cancellationToken);
 
         var orders = await query
             .OrderByDescending(x => x.CreatedAt)
@@ -77,15 +101,17 @@ public class AdminOrdersController : ControllerBase
                 Id = x.Id,
                 OrderNumber = x.OrderNumber,
                 CustomerFullName = x.CustomerFullName,
-                CustomerPhoneNumber = x.CustomerPhoneNumber,
+                CustomerPhoneNumber =
+                    x.CustomerPhoneNumber,
                 TotalPrice = x.TotalPrice,
                 DeliveryType = x.DeliveryType,
                 PaymentMethod = x.PaymentMethod,
                 Status = x.Status,
-                IsWhatsappMessageSent = x.IsWhatsappMessageSent,
+                IsWhatsappMessageSent =
+                    x.IsWhatsappMessageSent,
                 CreatedAt = x.CreatedAt
             })
-            .ToListAsync();
+            .ToListAsync(cancellationToken);
 
         var result = new PagedResult<AdminOrderListDto>
         {
@@ -93,24 +119,37 @@ public class AdminOrdersController : ControllerBase
             Page = page,
             PageSize = pageSize,
             TotalCount = totalCount,
-            TotalPages = (int)Math.Ceiling(totalCount / (double)pageSize)
+            TotalPages = (int)Math.Ceiling(
+                totalCount / (double)pageSize)
         };
 
-        return Ok(ApiResponse<PagedResult<AdminOrderListDto>>.Ok(result));
+        return Ok(
+            ApiResponse<PagedResult<AdminOrderListDto>>
+                .Ok(result));
     }
 
     [HttpGet("{id}")]
-    public async Task<IActionResult> GetOrderDetail(Guid id)
+    public async Task<IActionResult> GetOrderDetail(
+        Guid id,
+        CancellationToken cancellationToken)
     {
         var order = await _context.Orders
+            .AsNoTracking()
+            .AsSplitQuery()
             .Include(x => x.User)
             .Include(x => x.Items)
             .Include(x => x.StatusHistories)
-                .ThenInclude(h => h.ChangedByUser)
-            .FirstOrDefaultAsync(x => x.Id == id);
+                .ThenInclude(x => x.ChangedByUser)
+            .FirstOrDefaultAsync(
+                x => x.Id == id,
+                cancellationToken);
 
         if (order == null)
-            return NotFound(ApiResponse<string>.Fail("Sifariş tapılmadı"));
+        {
+            return NotFound(
+                ApiResponse<string>.Fail(
+                    "Sifariş tapılmadı"));
+        }
 
         var dto = new OrderDetailDto
         {
@@ -118,7 +157,8 @@ public class AdminOrdersController : ControllerBase
             OrderNumber = order.OrderNumber,
 
             CustomerFullName = order.CustomerFullName,
-            CustomerPhoneNumber = order.CustomerPhoneNumber,
+            CustomerPhoneNumber =
+                order.CustomerPhoneNumber,
 
             DeliveryType = order.DeliveryType,
             PaymentMethod = order.PaymentMethod,
@@ -132,112 +172,137 @@ public class AdminOrdersController : ControllerBase
             Apartment = order.Apartment,
 
             DeliveryDate = order.DeliveryDate,
-            DeliveryTimeRange = order.DeliveryTimeRange,
+            DeliveryTimeRange =
+                order.DeliveryTimeRange,
 
             DeliveryPrice = order.DeliveryPrice,
-            DeliveryDistanceKm = order.DeliveryDistanceKm,
+            DeliveryDistanceKm =
+                order.DeliveryDistanceKm,
             Note = order.Note,
 
-            TotalProductPrice = order.TotalProductPrice,
-            PromoDiscountAmount = order.PromoDiscountAmount,
+            TotalProductPrice =
+                order.TotalProductPrice,
+            PromoDiscountAmount =
+                order.PromoDiscountAmount,
             TotalPrice = order.TotalPrice,
 
             Status = order.Status,
 
-            IsWhatsappMessageSent = order.IsWhatsappMessageSent,
-            WhatsappMessageSentAt = order.WhatsappMessageSentAt,
+            IsWhatsappMessageSent =
+                order.IsWhatsappMessageSent,
+            WhatsappMessageSentAt =
+                order.WhatsappMessageSentAt,
 
             CreatedAt = order.CreatedAt,
 
-            Items = order.Items.Select(x => new OrderItemDto
-            {
-                ProductId = x.ProductId,
-                ProductVariantId = x.ProductVariantId,
-                ProductName = x.ProductName,
-                ProductCode = x.ProductCode,
-                SizeValue = x.SizeValue,
-                ColorName = x.ColorName,
-                UnitPrice = x.UnitPrice,
-                Quantity = x.Quantity,
-                TotalPrice = x.TotalPrice,
-                ProductImageUrl = x.ProductImageUrl,
-                ProductLink = x.ProductLink
-            }).ToList()
+            Items = order.Items
+                .Select(x => new OrderItemDto
+                {
+                    ProductId = x.ProductId,
+                    ProductVariantId =
+                        x.ProductVariantId,
+                    ProductName = x.ProductName,
+                    ProductCode = x.ProductCode,
+                    SizeValue = x.SizeValue,
+                    ColorName = x.ColorName,
+                    UnitPrice = x.UnitPrice,
+                    Quantity = x.Quantity,
+                    TotalPrice = x.TotalPrice,
+                    ProductImageUrl =
+                        x.ProductImageUrl,
+                    ProductLink = x.ProductLink
+                })
+                .ToList()
         };
 
-        return Ok(ApiResponse<OrderDetailDto>.Ok(dto));
+        return Ok(
+            ApiResponse<OrderDetailDto>.Ok(dto));
     }
 
     [HttpPut("{id}/status")]
-    public async Task<IActionResult> UpdateStatus(Guid id, UpdateOrderStatusDto dto)
+    public async Task<IActionResult> UpdateStatus(
+        Guid id,
+        UpdateOrderStatusDto dto,
+        CancellationToken cancellationToken)
     {
         var adminId = GetUserId();
 
         var order = await _context.Orders
+            .AsSplitQuery()
             .Include(x => x.User)
             .Include(x => x.Items)
-            .FirstOrDefaultAsync(x => x.Id == id);
+            .FirstOrDefaultAsync(
+                x => x.Id == id,
+                cancellationToken);
 
         if (order == null)
-            return NotFound(ApiResponse<string>.Fail("Sifariş tapılmadı"));
+        {
+            return NotFound(
+                ApiResponse<string>.Fail(
+                    "Sifariş tapılmadı"));
+        }
 
         if (order.Status == dto.NewStatus)
-            return BadRequest(ApiResponse<string>.Fail("Sifariş artıq bu statusdadır"));
+        {
+            return BadRequest(
+                ApiResponse<string>.Fail(
+                    "Sifariş artıq bu statusdadır"));
+        }
 
         var oldStatus = order.Status;
+        var updatedAt = DateTime.UtcNow;
 
         order.Status = dto.NewStatus;
-        order.UpdatedAt = DateTime.UtcNow;
+        order.UpdatedAt = updatedAt;
 
-        if ((dto.NewStatus == OrderStatus.Cancelled ||
-         dto.NewStatus == OrderStatus.Rejected) &&
-        !order.StockReturned)
-            {
-                foreach (var item in order.Items)
-                {
-                    var variant = await _context.ProductVariants
-                        .FirstOrDefaultAsync(x => x.Id == item.ProductVariantId);
+        var shouldReturnStock =
+            (dto.NewStatus == OrderStatus.Cancelled ||
+             dto.NewStatus == OrderStatus.Rejected) &&
+            !order.StockReturned;
 
-                    if (variant != null)
-                    {
-                        variant.StockCount += item.Quantity;
-                        variant.UpdatedAt = DateTime.UtcNow;
-                    }
-                }
-
-                order.StockReturned = true;
-                order.StockReturnedAt = DateTime.UtcNow;
-            }
-
-        _context.OrderStatusHistories.Add(new OrderStatusHistory
+        if (shouldReturnStock)
         {
-            OrderId = order.Id,
-            OldStatus = oldStatus,
-            NewStatus = dto.NewStatus,
-            ChangedByUserId = adminId,
-            Note = dto.Note
-        });
+            await ReturnOrderStockAsync(
+                order,
+                updatedAt,
+                cancellationToken);
+        }
 
-        await _context.SaveChangesAsync();
+        _context.OrderStatusHistories.Add(
+            new OrderStatusHistory
+            {
+                OrderId = order.Id,
+                OldStatus = oldStatus,
+                NewStatus = dto.NewStatus,
+                ChangedByUserId = adminId,
+                Note = dto.Note
+            });
+
+        await _context.SaveChangesAsync(
+            cancellationToken);
 
         await WriteAuditLogAsync(
             "UpdateStatus",
             "Order",
             order.Id.ToString(),
-            $"Sifariş statusu dəyişdirildi: {oldStatus} → {dto.NewStatus}. OrderNumber: {order.OrderNumber}");
+            $"Sifariş statusu dəyişdirildi: " +
+            $"{oldStatus} → {dto.NewStatus}. " +
+            $"OrderNumber: {order.OrderNumber}");
 
-        if (order.StockReturned &&
-            (dto.NewStatus == OrderStatus.Cancelled ||
-             dto.NewStatus == OrderStatus.Rejected))
+        if (shouldReturnStock)
         {
             await WriteAuditLogAsync(
                 "StockReturned",
                 "Order",
                 order.Id.ToString(),
-                $"Sifariş ləğv/rədd edildi və məhsullar stoka geri qaytarıldı. OrderNumber: {order.OrderNumber}");
+                "Sifariş ləğv/rədd edildi və " +
+                "məhsullar stoka geri qaytarıldı. " +
+                $"OrderNumber: {order.OrderNumber}");
         }
 
-        if (order.User != null && !string.IsNullOrWhiteSpace(order.User.Email))
+        if (order.User != null &&
+            !string.IsNullOrWhiteSpace(
+                order.User.Email))
         {
             await _emailService.SendOrderStatusAsync(
                 order.User.Email,
@@ -247,61 +312,152 @@ public class AdminOrdersController : ControllerBase
                 order.TotalPrice);
         }
 
-        return Ok(ApiResponse<string>.Ok("Sifariş statusu yeniləndi"));
+        return Ok(
+            ApiResponse<string>.Ok(
+                "Sifariş statusu yeniləndi"));
     }
 
     [HttpGet("{id}/status-whatsapp-link")]
-    public async Task<IActionResult> GetStatusWhatsAppLink(Guid id, [FromQuery] OrderStatus status)
+    public async Task<IActionResult>
+        GetStatusWhatsAppLink(
+            Guid id,
+            [FromQuery] OrderStatus status,
+            CancellationToken cancellationToken)
     {
         var order = await _context.Orders
+            .AsNoTracking()
             .Include(x => x.Items)
-            .FirstOrDefaultAsync(x => x.Id == id);
+            .FirstOrDefaultAsync(
+                x => x.Id == id,
+                cancellationToken);
 
         if (order == null)
-            return NotFound(ApiResponse<string>.Fail("Sifariş tapılmadı"));
+        {
+            return NotFound(
+                ApiResponse<string>.Fail(
+                    "Sifariş tapılmadı"));
+        }
 
-        if (string.IsNullOrWhiteSpace(order.CustomerPhoneNumber))
-            return BadRequest(ApiResponse<string>.Fail("Müştərinin telefon nömrəsi yoxdur"));
+        if (string.IsNullOrWhiteSpace(
+                order.CustomerPhoneNumber))
+        {
+            return BadRequest(
+                ApiResponse<string>.Fail(
+                    "Müştərinin telefon nömrəsi yoxdur"));
+        }
 
-        var message = BuildOrderStatusMessage(order, status);
+        var message = BuildOrderStatusMessage(
+            order,
+            status);
 
         if (string.IsNullOrWhiteSpace(message))
-            return BadRequest(ApiResponse<string>.Fail("Bu status üçün WhatsApp mesajı yoxdur"));
+        {
+            return BadRequest(
+                ApiResponse<string>.Fail(
+                    "Bu status üçün WhatsApp mesajı yoxdur"));
+        }
 
-        var phone = NormalizePhone(order.CustomerPhoneNumber);
-        var encodedMessage = Uri.EscapeDataString(message);
-        var url = $"https://wa.me/{phone}?text={encodedMessage}";
+        var phone = NormalizePhone(
+            order.CustomerPhoneNumber);
 
-        return Ok(ApiResponse<WhatsAppManualLinkDto>.Ok(new WhatsAppManualLinkDto
+        var encodedMessage =
+            Uri.EscapeDataString(message);
+
+        var url =
+            $"https://wa.me/{phone}?text={encodedMessage}";
+
+        var result = new WhatsAppManualLinkDto
         {
             Url = url,
             Message = message
-        }));
+        };
+
+        return Ok(
+            ApiResponse<WhatsAppManualLinkDto>
+                .Ok(result));
     }
 
     [HttpGet("{id}/courier-whatsapp-link")]
-    public async Task<IActionResult> GetCourierWhatsAppLink(Guid id, [FromQuery] string courierPhoneNumber)
+    public async Task<IActionResult>
+        GetCourierWhatsAppLink(
+            Guid id,
+            [FromQuery] string courierPhoneNumber,
+            CancellationToken cancellationToken)
     {
         var order = await _context.Orders
+            .AsNoTracking()
             .Include(x => x.Items)
-            .FirstOrDefaultAsync(x => x.Id == id);
+            .FirstOrDefaultAsync(
+                x => x.Id == id,
+                cancellationToken);
 
         if (order == null)
-            return NotFound(ApiResponse<string>.Fail("Sifariş tapılmadı"));
+        {
+            return NotFound(
+                ApiResponse<string>.Fail(
+                    "Sifariş tapılmadı"));
+        }
 
-        if (string.IsNullOrWhiteSpace(courierPhoneNumber))
-            return BadRequest(ApiResponse<string>.Fail("Kuryer nömrəsi daxil edilməlidir"));
+        if (string.IsNullOrWhiteSpace(
+                courierPhoneNumber))
+        {
+            return BadRequest(
+                ApiResponse<string>.Fail(
+                    "Kuryer nömrəsi daxil edilməlidir"));
+        }
 
         var message = BuildCourierMessage(order);
-        var phone = NormalizePhone(courierPhoneNumber);
-        var encodedMessage = Uri.EscapeDataString(message);
-        var url = $"https://wa.me/{phone}?text={encodedMessage}";
+        var phone = NormalizePhone(
+            courierPhoneNumber);
 
-        return Ok(ApiResponse<WhatsAppManualLinkDto>.Ok(new WhatsAppManualLinkDto
+        var encodedMessage =
+            Uri.EscapeDataString(message);
+
+        var url =
+            $"https://wa.me/{phone}?text={encodedMessage}";
+
+        var result = new WhatsAppManualLinkDto
         {
             Url = url,
             Message = message
-        }));
+        };
+
+        return Ok(
+            ApiResponse<WhatsAppManualLinkDto>
+                .Ok(result));
+    }
+
+    private async Task ReturnOrderStockAsync(
+        Order order,
+        DateTime updatedAt,
+        CancellationToken cancellationToken)
+    {
+        var variantIds = order.Items
+            .Select(x => x.ProductVariantId)
+            .Distinct()
+            .ToList();
+
+        var variants = await _context.ProductVariants
+            .Where(x => variantIds.Contains(x.Id))
+            .ToDictionaryAsync(
+                x => x.Id,
+                cancellationToken);
+
+        foreach (var item in order.Items)
+        {
+            if (!variants.TryGetValue(
+                    item.ProductVariantId,
+                    out var variant))
+            {
+                continue;
+            }
+
+            variant.StockCount += item.Quantity;
+            variant.UpdatedAt = updatedAt;
+        }
+
+        order.StockReturned = true;
+        order.StockReturnedAt = updatedAt;
     }
 
     private async Task WriteAuditLogAsync(
@@ -316,11 +472,15 @@ public class AdminOrdersController : ControllerBase
             entityName,
             entityId,
             description,
-            HttpContext.Connection.RemoteIpAddress?.ToString(),
+            HttpContext.Connection
+                .RemoteIpAddress?
+                .ToString(),
             Request.Headers.UserAgent.ToString());
     }
 
-    private static string BuildOrderStatusMessage(Order order, OrderStatus status)
+    private static string BuildOrderStatusMessage(
+        Order order,
+        OrderStatus status)
     {
         if (status == OrderStatus.Confirmed)
         {
@@ -358,9 +518,14 @@ nemesisbaku";
         {
             var estimatedMinutes = Math.Max(
                 20,
-                (int)Math.Round(((order.DeliveryDistanceKm ?? 0) / 20m) * 60m));
+                (int)Math.Round(
+                    ((order.DeliveryDistanceKm ?? 0) /
+                     20m) * 60m));
 
-            var productsText = string.Join(", ", order.Items.Select(x => x.ProductName));
+            var productsText = string.Join(
+                ", ",
+                order.Items.Select(
+                    x => x.ProductName));
 
             return
 $@"Salam {order.CustomerFullName}
@@ -428,17 +593,27 @@ Sifariş nömrəsi:
 nemesisbaku";
         }
 
-        return "";
+        return string.Empty;
     }
 
-    private static string BuildCourierMessage(Order order)
+    private static string BuildCourierMessage(
+        Order order)
     {
-        var mapLink = order.Latitude.HasValue && order.Longitude.HasValue
-            ? $"https://www.google.com/maps?q={order.Latitude},{order.Longitude}"
-            : "Konum yoxdur";
+        var mapLink =
+            order.Latitude.HasValue &&
+            order.Longitude.HasValue
+                ? "https://www.google.com/maps?q=" +
+                  $"{order.Latitude}," +
+                  $"{order.Longitude}"
+                : "Konum yoxdur";
 
-        var productsText = string.Join("\n", order.Items.Select(x =>
-            $"- {x.ProductName} | {x.SizeValue} | {x.ColorName} | {x.Quantity} ədəd"));
+        var productsText = string.Join(
+            "\n",
+            order.Items.Select(x =>
+                $"- {x.ProductName} | " +
+                $"{x.SizeValue} | " +
+                $"{x.ColorName} | " +
+                $"{x.Quantity} ədəd"));
 
         return
 $@"Yeni çatdırılma
@@ -488,7 +663,8 @@ Xəritə:
 nemesisbaku";
     }
 
-    private static string NormalizePhone(string phone)
+    private static string NormalizePhone(
+        string phone)
     {
         return phone
             .Replace("+", "")

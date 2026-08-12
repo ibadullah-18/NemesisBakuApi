@@ -5,9 +5,12 @@ using NemesisBakuApi.Entities;
 
 namespace NemesisBakuApi.Data;
 
-public class AppDbContext : IdentityDbContext<AppUser, IdentityRole<Guid>, Guid>
+public class AppDbContext
+    : IdentityDbContext<AppUser, IdentityRole<Guid>, Guid>
 {
-    public AppDbContext(DbContextOptions<AppDbContext> options) : base(options)
+    public AppDbContext(
+        DbContextOptions<AppDbContext> options)
+        : base(options)
     {
     }
 
@@ -55,81 +58,181 @@ public class AppDbContext : IdentityDbContext<AppUser, IdentityRole<Guid>, Guid>
     public DbSet<CourierPhone> CourierPhones { get; set; }
     public DbSet<TelegramOrderNotification> TelegramOrderNotifications { get; set; }
 
-    protected override void OnModelCreating(ModelBuilder builder)
+    protected override void OnModelCreating(
+        ModelBuilder builder)
     {
         base.OnModelCreating(builder);
 
+        ConfigureDecimalProperties(builder);
+        ConfigureIndexes(builder);
+        ConfigureRelationships(builder);
+        ConfigureQueryFilters(builder);
+    }
+
+    private static void ConfigureDecimalProperties(
+        ModelBuilder builder)
+    {
         builder.Entity<Product>()
             .Property(x => x.Price)
-            .HasColumnType("decimal(18,2)");
+            .HasPrecision(18, 2);
 
         builder.Entity<Product>()
             .Property(x => x.DiscountPrice)
-            .HasColumnType("decimal(18,2)");
+            .HasPrecision(18, 2);
 
         builder.Entity<Order>()
             .Property(x => x.DeliveryPrice)
-            .HasColumnType("decimal(18,2)");
+            .HasPrecision(18, 2);
+
+        builder.Entity<Order>()
+            .Property(x => x.DeliveryDistanceKm)
+            .HasPrecision(18, 2);
 
         builder.Entity<Order>()
             .Property(x => x.TotalProductPrice)
-            .HasColumnType("decimal(18,2)");
+            .HasPrecision(18, 2);
 
         builder.Entity<Order>()
             .Property(x => x.PromoDiscountAmount)
-            .HasColumnType("decimal(18,2)");
+            .HasPrecision(18, 2);
 
         builder.Entity<Order>()
             .Property(x => x.TotalPrice)
-            .HasColumnType("decimal(18,2)");
+            .HasPrecision(18, 2);
+
+        builder.Entity<Order>()
+            .Property(x => x.Latitude)
+            .HasPrecision(18, 8);
+
+        builder.Entity<Order>()
+            .Property(x => x.Longitude)
+            .HasPrecision(18, 8);
 
         builder.Entity<OrderItem>()
             .Property(x => x.UnitPrice)
-            .HasColumnType("decimal(18,2)");
+            .HasPrecision(18, 2);
 
         builder.Entity<OrderItem>()
             .Property(x => x.TotalPrice)
-            .HasColumnType("decimal(18,2)");
+            .HasPrecision(18, 2);
 
         builder.Entity<PromoCode>()
             .Property(x => x.DiscountValue)
-            .HasColumnType("decimal(18,2)");
+            .HasPrecision(18, 2);
 
         builder.Entity<PromoCode>()
             .Property(x => x.MinOrderAmount)
-            .HasColumnType("decimal(18,2)");
+            .HasPrecision(18, 2);
 
         builder.Entity<PromoCodeUsage>()
             .Property(x => x.DiscountAmount)
-            .HasColumnType("decimal(18,2)");
+            .HasPrecision(18, 2);
 
         builder.Entity<StoreInfo>()
             .Property(x => x.Latitude)
-            .HasColumnType("decimal(18,8)");
+            .HasPrecision(18, 8);
 
         builder.Entity<StoreInfo>()
             .Property(x => x.Longitude)
-            .HasColumnType("decimal(18,8)");
+            .HasPrecision(18, 8);
 
-        builder.Entity<Order>()
+        builder.Entity<UserAddress>()
             .Property(x => x.Latitude)
-            .HasColumnType("decimal(18,8)");
+            .HasPrecision(18, 8);
 
-        builder.Entity<Order>()
+        builder.Entity<UserAddress>()
             .Property(x => x.Longitude)
-            .HasColumnType("decimal(18,8)");
+            .HasPrecision(18, 8);
+    }
 
+    private static void ConfigureIndexes(
+        ModelBuilder builder)
+    {
         builder.Entity<BasketItem>()
-            .HasIndex(x => new { x.UserId, x.ProductVariantId })
+            .HasIndex(x => new
+            {
+                x.UserId,
+                x.ProductVariantId
+            })
             .IsUnique();
 
         builder.Entity<Favorite>()
-            .HasIndex(x => new { x.UserId, x.ProductId })
+            .HasIndex(x => new
+            {
+                x.UserId,
+                x.ProductId
+            })
             .IsUnique();
 
         builder.Entity<ProductVariant>()
-            .HasIndex(x => new { x.ProductId, x.SizeId, x.ColorId })
+            .HasIndex(x => new
+            {
+                x.ProductId,
+                x.SizeId,
+                x.ColorId
+            })
             .IsUnique();
+
+        builder.Entity<Product>()
+            .HasIndex(x => new
+            {
+                x.IsActive,
+                x.CreatedAt
+            });
+
+        builder.Entity<Product>()
+            .HasIndex(x => new
+            {
+                x.CategoryId,
+                x.IsActive
+            });
+
+        builder.Entity<Product>()
+            .HasIndex(x => new
+            {
+                x.BrandId,
+                x.IsActive
+            });
+
+        builder.Entity<ProductVariant>()
+            .HasIndex(x => new
+            {
+                x.ProductId,
+                x.IsActive,
+                x.StockCount
+            });
+
+        builder.Entity<Order>()
+            .HasIndex(x => new
+            {
+                x.UserId,
+                x.CreatedAt
+            });
+
+        builder.Entity<Order>()
+            .HasIndex(x => new
+            {
+                x.Status,
+                x.CreatedAt
+            });
+
+        builder.Entity<SiteVisit>()
+            .HasIndex(x => x.VisitorId);
+
+        builder.Entity<SiteVisit>()
+            .HasIndex(x => x.VisitedAt);
+
+        builder.Entity<WhatsAppClickLog>()
+            .HasIndex(x => x.ClickType);
+
+        builder.Entity<UserOtpCode>()
+            .HasIndex(x => new
+            {
+                x.Email,
+                x.Purpose,
+                x.IsUsed,
+                x.ExpiresAt
+            });
 
         builder.Entity<PromoCode>()
             .HasIndex(x => x.Code)
@@ -143,6 +246,47 @@ public class AppDbContext : IdentityDbContext<AppUser, IdentityRole<Guid>, Guid>
             .HasIndex(x => x.Token)
             .IsUnique();
 
+        builder.Entity<HomeSectionProduct>()
+            .HasIndex(x => new
+            {
+                x.HomeSectionId,
+                x.ProductId
+            })
+            .IsUnique();
+
+        builder.Entity<BasketLowStockEmailLog>()
+            .HasIndex(x => new
+            {
+                x.UserId,
+                x.ProductVariantId
+            })
+            .IsUnique();
+
+        builder.Entity<AppUser>()
+            .HasIndex(x => x.TelegramChatId)
+            .IsUnique()
+            .HasFilter("[TelegramChatId] IS NOT NULL");
+
+        builder.Entity<TelegramOrderNotification>()
+            .HasIndex(x => new
+            {
+                x.OrderId,
+                x.AdminUserId
+            })
+            .IsUnique();
+
+        builder.Entity<TelegramOrderNotification>()
+            .HasIndex(x => new
+            {
+                x.SentAt,
+                x.NextAttemptAt,
+                x.AttemptCount
+            });
+    }
+
+    private static void ConfigureRelationships(
+        ModelBuilder builder)
+    {
         builder.Entity<Product>()
             .HasMany(x => x.BasketItems)
             .WithOne(x => x.Product)
@@ -161,6 +305,46 @@ public class AppDbContext : IdentityDbContext<AppUser, IdentityRole<Guid>, Guid>
             .HasForeignKey(x => x.ProductVariantId)
             .OnDelete(DeleteBehavior.NoAction);
 
+        builder.Entity<PromoPage>()
+            .HasMany(x => x.Products)
+            .WithOne(x => x.PromoPage)
+            .HasForeignKey(x => x.PromoPageId)
+            .OnDelete(DeleteBehavior.NoAction);
+
+        builder.Entity<PromoPageProduct>()
+            .HasOne(x => x.Product)
+            .WithMany()
+            .HasForeignKey(x => x.ProductId)
+            .OnDelete(DeleteBehavior.NoAction);
+
+        builder.Entity<HomeSection>()
+            .HasMany(x => x.Products)
+            .WithOne(x => x.HomeSection)
+            .HasForeignKey(x => x.HomeSectionId)
+            .OnDelete(DeleteBehavior.NoAction);
+
+        builder.Entity<HomeSectionProduct>()
+            .HasOne(x => x.Product)
+            .WithMany()
+            .HasForeignKey(x => x.ProductId)
+            .OnDelete(DeleteBehavior.NoAction);
+
+        builder.Entity<TelegramOrderNotification>()
+            .HasOne(x => x.Order)
+            .WithMany(x => x.TelegramNotifications)
+            .HasForeignKey(x => x.OrderId)
+            .OnDelete(DeleteBehavior.NoAction);
+
+        builder.Entity<TelegramOrderNotification>()
+            .HasOne(x => x.AdminUser)
+            .WithMany(x => x.TelegramOrderNotifications)
+            .HasForeignKey(x => x.AdminUserId)
+            .OnDelete(DeleteBehavior.NoAction);
+    }
+
+    private static void ConfigureQueryFilters(
+        ModelBuilder builder)
+    {
         builder.Entity<Category>()
             .HasQueryFilter(x => !x.IsDeleted);
 
@@ -201,49 +385,13 @@ public class AppDbContext : IdentityDbContext<AppUser, IdentityRole<Guid>, Guid>
             .HasQueryFilter(x => !x.IsDeleted);
 
         builder.Entity<UserAddress>()
-            .Property(x => x.Latitude)
-            .HasColumnType("decimal(18,8)");
-
-        builder.Entity<UserAddress>()
-            .Property(x => x.Longitude)
-            .HasColumnType("decimal(18,8)");
-
-        builder.Entity<UserAddress>()
             .HasQueryFilter(x => !x.IsDeleted);
-
-        builder.Entity<PromoPage>()
-            .HasMany(x => x.Products)
-            .WithOne(x => x.PromoPage)
-            .HasForeignKey(x => x.PromoPageId)
-            .OnDelete(DeleteBehavior.NoAction);
-
-        builder.Entity<PromoPageProduct>()
-            .HasOne(x => x.Product)
-            .WithMany()
-            .HasForeignKey(x => x.ProductId)
-            .OnDelete(DeleteBehavior.NoAction);
 
         builder.Entity<PromoPage>()
             .HasQueryFilter(x => !x.IsDeleted);
 
         builder.Entity<PromoPageProduct>()
             .HasQueryFilter(x => !x.IsDeleted);
-
-        builder.Entity<HomeSection>()
-            .HasMany(x => x.Products)
-            .WithOne(x => x.HomeSection)
-            .HasForeignKey(x => x.HomeSectionId)
-            .OnDelete(DeleteBehavior.NoAction);
-
-        builder.Entity<HomeSectionProduct>()
-            .HasOne(x => x.Product)
-            .WithMany()
-            .HasForeignKey(x => x.ProductId)
-            .OnDelete(DeleteBehavior.NoAction);
-
-        builder.Entity<HomeSectionProduct>()
-            .HasIndex(x => new { x.HomeSectionId, x.ProductId })
-            .IsUnique();
 
         builder.Entity<HomeSection>()
             .HasQueryFilter(x => !x.IsDeleted);
@@ -255,38 +403,10 @@ public class AppDbContext : IdentityDbContext<AppUser, IdentityRole<Guid>, Guid>
             .HasQueryFilter(x => !x.IsDeleted);
 
         builder.Entity<BasketLowStockEmailLog>()
-            .HasIndex(x => new { x.UserId, x.ProductVariantId })
-            .IsUnique();
-
-        builder.Entity<BasketLowStockEmailLog>()
             .HasQueryFilter(x => !x.IsDeleted);
 
         builder.Entity<CourierPhone>()
             .HasQueryFilter(x => !x.IsDeleted);
-
-        builder.Entity<AppUser>()
-            .HasIndex(x => x.TelegramChatId)
-            .IsUnique()
-            .HasFilter("[TelegramChatId] IS NOT NULL");
-
-        builder.Entity<TelegramOrderNotification>()
-            .HasIndex(x => new { x.OrderId, x.AdminUserId })
-            .IsUnique();
-
-        builder.Entity<TelegramOrderNotification>()
-            .HasIndex(x => new { x.SentAt, x.NextAttemptAt, x.AttemptCount });
-
-        builder.Entity<TelegramOrderNotification>()
-            .HasOne(x => x.Order)
-            .WithMany(x => x.TelegramNotifications)
-            .HasForeignKey(x => x.OrderId)
-            .OnDelete(DeleteBehavior.NoAction);
-
-        builder.Entity<TelegramOrderNotification>()
-            .HasOne(x => x.AdminUser)
-            .WithMany(x => x.TelegramOrderNotifications)
-            .HasForeignKey(x => x.AdminUserId)
-            .OnDelete(DeleteBehavior.NoAction);
 
         builder.Entity<TelegramOrderNotification>()
             .HasQueryFilter(x => !x.IsDeleted);

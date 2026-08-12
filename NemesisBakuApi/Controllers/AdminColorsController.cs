@@ -15,16 +15,30 @@ public class AdminColorsController : ControllerBase
 {
     private readonly AppDbContext _context;
 
-    public AdminColorsController(AppDbContext context)
+    public AdminColorsController(
+        AppDbContext context)
     {
         _context = context;
     }
 
     [HttpPost]
-    public async Task<IActionResult> Create(ColorCreateDto dto)
+    public async Task<IActionResult> Create(
+        ColorCreateDto dto,
+        CancellationToken cancellationToken)
     {
-        if (await _context.Colors.AnyAsync(x => x.Name == dto.Name))
-            return BadRequest(ApiResponse<string>.Fail("Rəng artıq mövcuddur"));
+        var colorExists =
+            await _context.Colors
+                .AsNoTracking()
+                .AnyAsync(
+                    x => x.Name == dto.Name,
+                    cancellationToken);
+
+        if (colorExists)
+        {
+            return BadRequest(
+                ApiResponse<string>.Fail(
+                    "Rəng artıq mövcuddur"));
+        }
 
         var color = new Color
         {
@@ -33,43 +47,71 @@ public class AdminColorsController : ControllerBase
         };
 
         _context.Colors.Add(color);
-        await _context.SaveChangesAsync();
 
-        return Ok(ApiResponse<Guid>.Ok(color.Id));
+        await _context.SaveChangesAsync(
+            cancellationToken);
+
+        return Ok(
+            ApiResponse<Guid>.Ok(color.Id));
     }
 
     [HttpGet]
-    public async Task<IActionResult> GetAll()
+    public async Task<IActionResult> GetAll(
+        CancellationToken cancellationToken)
     {
         var colors = await _context.Colors
+            .AsNoTracking()
             .Where(x => !x.IsDeleted)
             .OrderBy(x => x.Name)
-            .ToListAsync();
+            .ToListAsync(cancellationToken);
 
-        return Ok(ApiResponse<object>.Ok(colors));
+        return Ok(
+            ApiResponse<object>.Ok(colors));
     }
 
-    [HttpDelete("{id}")]
-    public async Task<IActionResult> DeleteColor(Guid id)
+    [HttpDelete("{id:guid}")]
+    public async Task<IActionResult> DeleteColor(
+        Guid id,
+        CancellationToken cancellationToken)
     {
         var color = await _context.Colors
-            .FirstOrDefaultAsync(x => x.Id == id);
+            .FirstOrDefaultAsync(
+                x => x.Id == id,
+                cancellationToken);
 
         if (color == null)
-            return NotFound(ApiResponse<string>.Fail("Rəng tapılmadı"));
+        {
+            return NotFound(
+                ApiResponse<string>.Fail(
+                    "Rəng tapılmadı"));
+        }
 
-        var hasVariants = await _context.ProductVariants
-            .AnyAsync(x => x.ColorId == id && !x.IsDeleted);
+        var hasVariants =
+            await _context.ProductVariants
+                .AsNoTracking()
+                .AnyAsync(
+                    x =>
+                        x.ColorId == id &&
+                        !x.IsDeleted,
+                    cancellationToken);
 
         if (hasVariants)
-            return BadRequest(ApiResponse<string>.Fail(
-                "Bu rəng məhsul variantlarında istifadə olunur. Əvvəl həmin variantları silin"));
+        {
+            return BadRequest(
+                ApiResponse<string>.Fail(
+                    "Bu rəng məhsul variantlarında " +
+                    "istifadə olunur. Əvvəl həmin " +
+                    "variantları silin"));
+        }
 
         color.IsDeleted = true;
         color.UpdatedAt = DateTime.UtcNow;
 
-        await _context.SaveChangesAsync();
+        await _context.SaveChangesAsync(
+            cancellationToken);
 
-        return Ok(ApiResponse<string>.Ok("Rəng silindi"));
+        return Ok(
+            ApiResponse<string>.Ok(
+                "Rəng silindi"));
     }
 }

@@ -11,7 +11,7 @@ namespace NemesisBakuApi.Controllers;
 
 [ApiController]
 [Route("api/[controller]")]
-[Authorize(Roles = "SuperAdmin, Admin")]
+[Authorize(Roles = "SuperAdmin,Admin")]
 public class AdminBrandsController : ControllerBase
 {
     private readonly AppDbContext _context;
@@ -27,21 +27,40 @@ public class AdminBrandsController : ControllerBase
 
     [HttpPost]
     [Consumes("multipart/form-data")]
-    public async Task<IActionResult> Create([FromForm] BrandCreateDto dto)
+    public async Task<IActionResult> Create(
+        [FromForm] BrandCreateDto dto,
+        CancellationToken cancellationToken)
     {
-        var name = dto.Name.Trim();
+        var name = dto.Name?.Trim();
 
         if (string.IsNullOrWhiteSpace(name))
-            return BadRequest(ApiResponse<string>.Fail("Brend adı boş ola bilməz"));
+        {
+            return BadRequest(
+                ApiResponse<string>.Fail(
+                    "Brend adı boş ola bilməz"));
+        }
 
-        if (await _context.Brands.AnyAsync(x => x.Name == name))
-            return BadRequest(ApiResponse<string>.Fail("Brend artıq mövcuddur"));
+        var exists = await _context.Brands
+            .AsNoTracking()
+            .AnyAsync(
+                x => x.Name == name,
+                cancellationToken);
+
+        if (exists)
+        {
+            return BadRequest(
+                ApiResponse<string>.Fail(
+                    "Brend artıq mövcuddur"));
+        }
 
         string? imageUrl = null;
 
         if (dto.Image != null)
         {
-            imageUrl = await _fileService.UploadImageAsync(dto.Image, "brands");
+            imageUrl = await _fileService
+                .UploadImageAsync(
+                    dto.Image,
+                    "brands");
         }
 
         var brand = new Brand
@@ -51,15 +70,34 @@ public class AdminBrandsController : ControllerBase
         };
 
         _context.Brands.Add(brand);
-        await _context.SaveChangesAsync();
 
-        return Ok(ApiResponse<Guid>.Ok(brand.Id, "Brend yaradıldı"));
+        try
+        {
+            await _context.SaveChangesAsync(
+                cancellationToken);
+        }
+        catch
+        {
+            if (!string.IsNullOrWhiteSpace(imageUrl))
+            {
+                await TryDeleteImageAsync(imageUrl);
+            }
+
+            throw;
+        }
+
+        return Ok(
+            ApiResponse<Guid>.Ok(
+                brand.Id,
+                "Brend yaradıldı"));
     }
 
     [HttpGet]
-    public async Task<IActionResult> GetAll()
+    public async Task<IActionResult> GetAll(
+        CancellationToken cancellationToken)
     {
         var brands = await _context.Brands
+            .AsNoTracking()
             .OrderBy(x => x.Name)
             .Select(x => new
             {
@@ -67,67 +105,143 @@ public class AdminBrandsController : ControllerBase
                 x.Name,
                 x.ImageUrl
             })
-            .ToListAsync();
+            .ToListAsync(cancellationToken);
 
-        return Ok(ApiResponse<object>.Ok(brands));
+        return Ok(
+            ApiResponse<object>.Ok(brands));
     }
 
-    [HttpPut("{id}")]
+    [HttpPut("{id:guid}")]
     [Consumes("multipart/form-data")]
-    public async Task<IActionResult> Update(Guid id, [FromForm] BrandCreateDto dto)
+    public async Task<IActionResult> Update(
+        Guid id,
+        [FromForm] BrandCreateDto dto,
+        CancellationToken cancellationToken)
     {
-        var brand = await _context.Brands.FirstOrDefaultAsync(x => x.Id == id);
+        var brand = await _context.Brands
+            .FirstOrDefaultAsync(
+                x => x.Id == id,
+                cancellationToken);
 
         if (brand == null)
-            return NotFound(ApiResponse<string>.Fail("Brend tapılmadı"));
+        {
+            return NotFound(
+                ApiResponse<string>.Fail(
+                    "Brend tapılmadı"));
+        }
 
-        var name = dto.Name.Trim();
+        var name = dto.Name?.Trim();
 
         if (string.IsNullOrWhiteSpace(name))
-            return BadRequest(ApiResponse<string>.Fail("Brend adı boş ola bilməz"));
+        {
+            return BadRequest(
+                ApiResponse<string>.Fail(
+                    "Brend adı boş ola bilməz"));
+        }
 
         var exists = await _context.Brands
-            .AnyAsync(x => x.Id != id && x.Name == name);
+            .AsNoTracking()
+            .AnyAsync(
+                x =>
+                    x.Id != id &&
+                    x.Name == name,
+                cancellationToken);
 
         if (exists)
-            return BadRequest(ApiResponse<string>.Fail("Bu adda brend artıq mövcuddur"));
+        {
+            return BadRequest(
+                ApiResponse<string>.Fail(
+                    "Bu adda brend artıq mövcuddur"));
+        }
+
+        var oldImageUrl = brand.ImageUrl;
+        string? newImageUrl = null;
 
         if (dto.Image != null)
         {
-            if (!string.IsNullOrWhiteSpace(brand.ImageUrl))
-            {
-                await _fileService.DeleteImageAsync(brand.ImageUrl);
-            }
+            newImageUrl = await _fileService
+                .UploadImageAsync(
+                    dto.Image,
+                    "brands");
 
-            brand.ImageUrl = await _fileService.UploadImageAsync(dto.Image, "brands");
+            brand.ImageUrl = newImageUrl;
         }
 
         brand.Name = name;
         brand.UpdatedAt = DateTime.UtcNow;
 
-        await _context.SaveChangesAsync();
+        try
+        {
+            await _context.SaveChangesAsync(
+                cancellationToken);
+        }
+        catch
+        {
+            if (!string.IsNullOrWhiteSpace(newImageUrl))
+            {
+                await TryDeleteImageAsync(newImageUrl);
+            }
 
-        return Ok(ApiResponse<string>.Ok("Brend yeniləndi"));
+            throw;
+        }
+
+        if (newImageUrl != null &&
+            !string.IsNullOrWhiteSpace(oldImageUrl))
+        {
+            await TryDeleteImageAsync(oldImageUrl);
+        }
+
+        return Ok(
+            ApiResponse<string>.Ok(
+                "Brend yeniləndi"));
     }
 
-    [HttpDelete("{id}")]
-    public async Task<IActionResult> Delete(Guid id)
+    [HttpDelete("{id:guid}")]
+    public async Task<IActionResult> Delete(
+        Guid id,
+        CancellationToken cancellationToken)
     {
-        var brand = await _context.Brands.FirstOrDefaultAsync(x => x.Id == id);
+        var brand = await _context.Brands
+            .FirstOrDefaultAsync(
+                x => x.Id == id,
+                cancellationToken);
 
         if (brand == null)
-            return NotFound(ApiResponse<string>.Fail("Brend tapılmadı"));
-
-        if (!string.IsNullOrWhiteSpace(brand.ImageUrl))
         {
-            await _fileService.DeleteImageAsync(brand.ImageUrl);
+            return NotFound(
+                ApiResponse<string>.Fail(
+                    "Brend tapılmadı"));
         }
+
+        var imageUrl = brand.ImageUrl;
 
         brand.IsDeleted = true;
         brand.UpdatedAt = DateTime.UtcNow;
 
-        await _context.SaveChangesAsync();
+        await _context.SaveChangesAsync(
+            cancellationToken);
 
-        return Ok(ApiResponse<string>.Ok("Brend silindi"));
+        if (!string.IsNullOrWhiteSpace(imageUrl))
+        {
+            await TryDeleteImageAsync(imageUrl);
+        }
+
+        return Ok(
+            ApiResponse<string>.Ok(
+                "Brend silindi"));
+    }
+
+    private async Task TryDeleteImageAsync(
+        string imageUrl)
+    {
+        try
+        {
+            await _fileService.DeleteImageAsync(
+                imageUrl);
+        }
+        catch
+        {
+            // Cloudinary xətası database əməliyyatını pozmasın.
+        }
     }
 }

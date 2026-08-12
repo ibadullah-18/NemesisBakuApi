@@ -16,129 +16,177 @@ public class FavoritesController : ControllerBase
 {
     private readonly AppDbContext _context;
 
-    public FavoritesController(AppDbContext context)
+    public FavoritesController(
+        AppDbContext context)
     {
         _context = context;
     }
 
     private Guid GetUserId()
     {
-        var userId = User.FindFirstValue(ClaimTypes.NameIdentifier);
+        var userIdValue = User.FindFirstValue(
+            ClaimTypes.NameIdentifier);
 
-        if (string.IsNullOrWhiteSpace(userId))
+        if (!Guid.TryParse(userIdValue, out var userId))
+        {
             throw new UnauthorizedAccessException();
+        }
 
-        return Guid.Parse(userId);
+        return userId;
     }
 
     [HttpGet]
-    public async Task<IActionResult> GetFavorites()
+    public async Task<IActionResult> GetFavorites(
+        CancellationToken cancellationToken)
     {
         var userId = GetUserId();
 
         var favorites = await _context.Favorites
-            .Include(x => x.Product)
-                .ThenInclude(p => p.Images)
+            .AsNoTracking()
             .Where(x => x.UserId == userId)
             .OrderByDescending(x => x.CreatedAt)
             .Select(x => new FavoriteDto
             {
                 ProductId = x.ProductId,
-                ProductName = x.Product.Name,
-                ProductCode = x.Product.ProductCode,
 
-                Price = x.Product.Price,
-                DiscountPrice = x.Product.DiscountPrice,
-                IsDiscounted = x.Product.IsDiscounted,
+                ProductName =
+                    x.Product.Name,
 
-                MainImageUrl = x.Product.Images
-                    .OrderByDescending(i => i.IsMain)
-                    .ThenBy(i => i.Order)
-                    .Select(i => i.ImageUrl)
-                    .FirstOrDefault()
+                ProductCode =
+                    x.Product.ProductCode,
+
+                Price =
+                    x.Product.Price,
+
+                DiscountPrice =
+                    x.Product.DiscountPrice,
+
+                IsDiscounted =
+                    x.Product.IsDiscounted,
+
+                MainImageUrl =
+                    x.Product.Images
+                        .OrderByDescending(
+                            image => image.IsMain)
+                        .ThenBy(
+                            image => image.Order)
+                        .Select(
+                            image => image.ImageUrl)
+                        .FirstOrDefault()
             })
-            .ToListAsync();
+            .ToListAsync(cancellationToken);
 
-        return Ok(ApiResponse<List<FavoriteDto>>.Ok(favorites));
+        return Ok(
+            ApiResponse<List<FavoriteDto>>
+                .Ok(favorites));
     }
 
-    [HttpPost("{productId}")]
-    public async Task<IActionResult> ToggleFavorite(Guid productId)
+    [HttpPost("{productId:guid}")]
+    public async Task<IActionResult> ToggleFavorite(
+        Guid productId,
+        CancellationToken cancellationToken)
     {
         var userId = GetUserId();
 
-        var productExists = await _context.Products
-            .AnyAsync(x => x.Id == productId && x.IsActive);
+        var productExists =
+            await _context.Products
+                .AsNoTracking()
+                .AnyAsync(
+                    x =>
+                        x.Id == productId &&
+                        x.IsActive,
+                    cancellationToken);
 
         if (!productExists)
-            return NotFound(ApiResponse<string>.Fail("Məhsul tapılmadı"));
+        {
+            return NotFound(
+                ApiResponse<string>.Fail(
+                    "Məhsul tapılmadı"));
+        }
 
         var favorite = await _context.Favorites
             .IgnoreQueryFilters()
-            .FirstOrDefaultAsync(x =>
-                x.UserId == userId &&
-                x.ProductId == productId);
+            .FirstOrDefaultAsync(
+                x =>
+                    x.UserId == userId &&
+                    x.ProductId == productId,
+                cancellationToken);
 
         if (favorite == null)
         {
-            _context.Favorites.Add(new Favorite
-            {
-                UserId = userId,
-                ProductId = productId
-            });
+            _context.Favorites.Add(
+                new Favorite
+                {
+                    UserId = userId,
+                    ProductId = productId
+                });
 
-            await _context.SaveChangesAsync();
+            await _context.SaveChangesAsync(
+                cancellationToken);
 
-            return Ok(ApiResponse<string>.Ok("Favorilərə əlavə edildi"));
+            return Ok(
+                ApiResponse<string>.Ok(
+                    "Favorilərə əlavə edildi"));
         }
 
-        if (favorite.IsDeleted)
-        {
-            favorite.IsDeleted = false;
-            favorite.UpdatedAt = DateTime.UtcNow;
-        }
-        else
-        {
-            favorite.IsDeleted = true;
-            favorite.UpdatedAt = DateTime.UtcNow;
-        }
+        favorite.IsDeleted = !favorite.IsDeleted;
+        favorite.UpdatedAt = DateTime.UtcNow;
 
-        await _context.SaveChangesAsync();
+        await _context.SaveChangesAsync(
+            cancellationToken);
 
-        return Ok(ApiResponse<string>.Ok("Favori statusu dəyişdirildi"));
+        return Ok(
+            ApiResponse<string>.Ok(
+                "Favori statusu dəyişdirildi"));
     }
 
-    [HttpGet("check/{productId}")]
-    public async Task<IActionResult> CheckFavorite(Guid productId)
+    [HttpGet("check/{productId:guid}")]
+    public async Task<IActionResult> CheckFavorite(
+        Guid productId,
+        CancellationToken cancellationToken)
     {
         var userId = GetUserId();
 
         var exists = await _context.Favorites
-            .AnyAsync(x =>
-                x.UserId == userId &&
-                x.ProductId == productId);
+            .AsNoTracking()
+            .AnyAsync(
+                x =>
+                    x.UserId == userId &&
+                    x.ProductId == productId,
+                cancellationToken);
 
-        return Ok(ApiResponse<bool>.Ok(exists));
+        return Ok(
+            ApiResponse<bool>.Ok(exists));
     }
 
-    [HttpDelete("{productId}")]
-    [Authorize]
-    public async Task<IActionResult> Remove(Guid productId)
+    [HttpDelete("{productId:guid}")]
+    public async Task<IActionResult> Remove(
+        Guid productId,
+        CancellationToken cancellationToken)
     {
         var userId = GetUserId();
 
         var favorite = await _context.Favorites
-            .FirstOrDefaultAsync(x =>
-                x.UserId == userId &&
-                x.ProductId == productId);
+            .FirstOrDefaultAsync(
+                x =>
+                    x.UserId == userId &&
+                    x.ProductId == productId,
+                cancellationToken);
 
         if (favorite == null)
-            return NotFound(ApiResponse<string>.Fail("Favorit tapılmadı"));
+        {
+            return NotFound(
+                ApiResponse<string>.Fail(
+                    "Favorit tapılmadı"));
+        }
 
         _context.Favorites.Remove(favorite);
 
-        await _context.SaveChangesAsync();
+        await _context.SaveChangesAsync(
+            cancellationToken);
 
-        return Ok(ApiResponse<string>.Ok("Favoritdən silindi"));
+        return Ok(
+            ApiResponse<string>.Ok(
+                "Favoritdən silindi"));
     }
 }

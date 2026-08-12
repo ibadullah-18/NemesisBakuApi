@@ -13,8 +13,11 @@ namespace NemesisBakuApi.Controllers;
 [ApiController]
 [Route("api/[controller]")]
 [Authorize(Roles = "SuperAdmin,Admin")]
-public class AdminEmailAnnouncementsController : ControllerBase
+public class AdminEmailAnnouncementsController
+    : ControllerBase
 {
+    private const int MaxRecipients = 1000;
+
     private readonly AppDbContext _context;
     private readonly IEmailService _emailService;
     private readonly IAuditLogService _auditLogService;
@@ -29,25 +32,36 @@ public class AdminEmailAnnouncementsController : ControllerBase
         _auditLogService = auditLogService;
     }
 
-    private Guid GetUserId()
-    {
-        var userId = User.FindFirstValue(ClaimTypes.NameIdentifier);
-        if (string.IsNullOrWhiteSpace(userId)) throw new UnauthorizedAccessException();
-        return Guid.Parse(userId);
-    }
-
     [HttpPost]
-    public async Task<IActionResult> CreateAndSend(CreateEmailAnnouncementDto dto)
+    public async Task<IActionResult> CreateAndSend(
+        CreateEmailAnnouncementDto dto,
+        CancellationToken cancellationToken)
     {
         if (string.IsNullOrWhiteSpace(dto.Title))
-            return BadRequest(ApiResponse<string>.Fail("Başlıq boş ola bilməz"));
+        {
+            return BadRequest(
+                ApiResponse<string>.Fail(
+                    "Başlıq boş ola bilməz"));
+        }
 
-        if (string.IsNullOrWhiteSpace(dto.Description))
-            return BadRequest(ApiResponse<string>.Fail("Açıqlama boş ola bilməz"));
+        if (string.IsNullOrWhiteSpace(
+                dto.Description))
+        {
+            return BadRequest(
+                ApiResponse<string>.Fail(
+                    "Açıqlama boş ola bilməz"));
+        }
 
-        var users = await _context.Users
-            .Where(x => !x.IsDeleted && x.IsActive && !string.IsNullOrWhiteSpace(x.Email))
-            .ToListAsync();
+        var emails = await _context.Users
+            .AsNoTracking()
+            .Where(x =>
+                !x.IsDeleted &&
+                x.IsActive &&
+                x.Email != null &&
+                x.Email != "")
+            .Select(x => x.Email!)
+            .Take(MaxRecipients)
+            .ToListAsync(cancellationToken);
 
         var announcement = new EmailAnnouncement
         {
@@ -55,73 +69,119 @@ public class AdminEmailAnnouncementsController : ControllerBase
             Description = dto.Description,
             ButtonText = dto.ButtonText,
             ButtonUrl = dto.ButtonUrl,
-            TotalRecipients = users.Count,
+            TotalRecipients = emails.Count,
             CreatedByUserId = GetUserId()
         };
 
-        _context.EmailAnnouncements.Add(announcement);
+        _context.EmailAnnouncements.Add(
+            announcement);
 
-        foreach (var user in users)
+        await _context.SaveChangesAsync(
+            cancellationToken);
+
+        foreach (var email in emails)
         {
-            var sent = await _emailService.SendAnnouncementAsync(
-                user.Email!,
-                announcement.Title,
-                announcement.Description,
-                announcement.ButtonText,
-                announcement.ButtonUrl);
+            if (cancellationToken.IsCancellationRequested)
+            {
+                break;
+            }
 
-            if (sent) announcement.SentCount++;
-            else announcement.FailedCount++;
+            var sent = await _emailService
+                .SendAnnouncementAsync(
+                    email,
+                    announcement.Title,
+                    announcement.Description,
+                    announcement.ButtonText,
+                    announcement.ButtonUrl);
+
+            if (sent)
+            {
+                announcement.SentCount++;
+            }
+            else
+            {
+                announcement.FailedCount++;
+            }
         }
 
-        await _context.SaveChangesAsync();
+        await _context.SaveChangesAsync(
+            CancellationToken.None);
 
         await WriteAuditLogAsync(
-            "Send",
-            "EmailAnnouncement",
-            announcement.Id.ToString(),
-            $"Email elan göndərildi: {announcement.Title}. Recipients: {announcement.TotalRecipients}, Sent: {announcement.SentCount}, Failed: {announcement.FailedCount}");
+            announcement);
 
-        return Ok(ApiResponse<object>.Ok(new
+        var result = new
         {
             announcement.Id,
             announcement.TotalRecipients,
             announcement.SentCount,
             announcement.FailedCount
-        }, "Elan göndərildi"));
+        };
+
+        return Ok(
+            ApiResponse<object>.Ok(
+                result,
+                "Elan göndərildi"));
     }
 
     [HttpGet]
-    public async Task<IActionResult> GetAll()
+    public async Task<IActionResult> GetAll(
+        CancellationToken cancellationToken)
     {
-        var announcements = await _context.EmailAnnouncements
-            .OrderByDescending(x => x.CreatedAt)
-            .Select(x => new
-            {
-                x.Id,
-                x.Title,
-                x.Description,
-                x.ButtonText,
-                x.ButtonUrl,
-                x.TotalRecipients,
-                x.SentCount,
-                x.FailedCount,
-                x.CreatedAt
-            })
-            .ToListAsync();
+        var announcements =
+            await _context.EmailAnnouncements
+                .AsNoTracking()
+                .OrderByDescending(
+                    x => x.CreatedAt)
+                .Select(x => new
+                {
+                    x.Id,
+                    x.Title,
+                    x.Description,
+                    x.ButtonText,
+                    x.ButtonUrl,
+                    x.TotalRecipients,
+                    x.SentCount,
+                    x.FailedCount,
+                    x.CreatedAt
+                })
+                .ToListAsync(cancellationToken);
 
-        return Ok(ApiResponse<object>.Ok(announcements));
+        return Ok(
+            ApiResponse<object>.Ok(
+                announcements));
     }
 
-    private async Task WriteAuditLogAsync(string action, string entityName, string? entityId, string? description)
+    private Guid GetUserId()
+    {
+        var value = User.FindFirstValue(
+            ClaimTypes.NameIdentifier);
+
+        if (!Guid.TryParse(value, out var userId))
+        {
+            throw new UnauthorizedAccessException();
+        }
+
+        return userId;
+    }
+
+    private async Task WriteAuditLogAsync(
+        EmailAnnouncement announcement)
     {
         await _auditLogService.CreateAsync(
             GetUserId(),
-            action,
-            entityName,
-            entityId,
-            description,
-            HttpContext.Connection.RemoteIpAddress?.ToString(),
+            "Send",
+            "EmailAnnouncement",
+            announcement.Id.ToString(),
+            $"Email elan göndərildi: " +
+            $"{announcement.Title}. " +
+            $"Recipients: " +
+            $"{announcement.TotalRecipients}, " +
+            $"Sent: {announcement.SentCount}, " +
+            $"Failed: {announcement.FailedCount}",
+            HttpContext.Connection
+                .RemoteIpAddress?
+                .ToString(),
             Request.Headers.UserAgent.ToString());
     }
 }

@@ -30,15 +30,9 @@ public class ProductsController : ControllerBase
             filter.PageSize = 100;
 
         var query = _context.Products
-            .Include(x => x.Category)
-            .Include(x => x.Brand)
-            .Include(x => x.Images)
-            .Include(x => x.Variants)
-                .ThenInclude(v => v.Size)
-            .Include(x => x.Variants)
-                .ThenInclude(v => v.Color)
-            .Where(x => x.IsActive)
-            .AsQueryable();
+         .AsNoTracking()
+         .Where(x => x.IsActive)
+         .AsQueryable();
 
         if (filter.CategoryId.HasValue)
         {
@@ -182,23 +176,37 @@ public class ProductsController : ControllerBase
     }
 
     [HttpGet("{id}")]
-    public async Task<IActionResult> GetProductDetail(Guid id)
+    public async Task<IActionResult> GetProductDetail(
+    Guid id,
+    CancellationToken cancellationToken)
     {
+        var updatedRows = await _context.Products
+            .Where(x => x.Id == id && x.IsActive)
+            .ExecuteUpdateAsync(
+                setters => setters.SetProperty(
+                    x => x.ViewCount,
+                    x => x.ViewCount + 1),
+                cancellationToken);
+
+        if (updatedRows == 0)
+        {
+            return NotFound(
+                ApiResponse<string>.Fail("Məhsul tapılmadı"));
+        }
+
         var product = await _context.Products
+            .AsNoTracking()
+            .AsSplitQuery()
             .Include(x => x.Category)
             .Include(x => x.Brand)
             .Include(x => x.Images)
             .Include(x => x.Variants)
-                .ThenInclude(v => v.Size)
+                .ThenInclude(x => x.Size)
             .Include(x => x.Variants)
-                .ThenInclude(v => v.Color)
-            .FirstOrDefaultAsync(x => x.Id == id && x.IsActive);
-
-        if (product == null)
-            return NotFound(ApiResponse<string>.Fail("Məhsul tapılmadı"));
-
-        product.ViewCount++;
-        await _context.SaveChangesAsync();
+                .ThenInclude(x => x.Color)
+            .FirstAsync(
+                x => x.Id == id && x.IsActive,
+                cancellationToken);
 
         var dto = new ProductDetailDto
         {
@@ -209,13 +217,16 @@ public class ProductsController : ControllerBase
             Model = product.Model,
             Price = product.Price,
             DiscountPrice = product.DiscountPrice,
+
             IsDiscounted =
                 product.DiscountPrice.HasValue &&
                 product.DiscountPrice.Value > 0 &&
                 product.DiscountPrice.Value < product.Price,
+
             IsFeatured = product.IsFeatured,
             CategoryName = product.Category.Name,
             BrandName = product.Brand.Name,
+
             Images = product.Images
                 .OrderByDescending(x => x.IsMain)
                 .ThenBy(x => x.Order)
@@ -227,17 +238,18 @@ public class ProductsController : ControllerBase
                     DisplayOrder = x.Order
                 })
                 .ToList(),
+
             Variants = product.Variants
-                .Where(v => v.IsActive)
-                .Select(v => new ProductVariantDetailDto
+                .Where(x => x.IsActive)
+                .Select(x => new ProductVariantDetailDto
                 {
-                    Id = v.Id,
-                    SizeId = v.SizeId,
-                    SizeValue = v.Size.Value,
-                    ColorId = v.ColorId,
-                    ColorName = v.Color.Name,
-                    ColorHexCode = v.Color.HexCode,
-                    StockCount = v.StockCount
+                    Id = x.Id,
+                    SizeId = x.SizeId,
+                    SizeValue = x.Size.Value,
+                    ColorId = x.ColorId,
+                    ColorName = x.Color.Name,
+                    ColorHexCode = x.Color.HexCode,
+                    StockCount = x.StockCount
                 })
                 .ToList()
         };
@@ -248,102 +260,137 @@ public class ProductsController : ControllerBase
     [HttpGet("filter-options")]
     public async Task<IActionResult> GetFilterOptions(
         [FromQuery] Guid? categoryId,
-        [FromQuery] Guid? brandId)
+        [FromQuery] Guid? brandId,
+        CancellationToken cancellationToken)
     {
         var productsQuery = _context.Products
-            .Include(x => x.Category)
-            .Include(x => x.Brand)
-            .Include(x => x.Variants)
-                .ThenInclude(v => v.Size)
-            .Include(x => x.Variants)
-                .ThenInclude(v => v.Color)
-            .Where(x => x.IsActive)
-            .AsQueryable();
+            .AsNoTracking()
+            .Where(x => x.IsActive);
 
         if (categoryId.HasValue)
         {
-            productsQuery = productsQuery.Where(x => x.CategoryId == categoryId.Value);
+            productsQuery = productsQuery.Where(
+                x => x.CategoryId == categoryId.Value);
         }
 
         if (brandId.HasValue)
         {
-            productsQuery = productsQuery.Where(x => x.BrandId == brandId.Value);
+            productsQuery = productsQuery.Where(
+                x => x.BrandId == brandId.Value);
         }
 
-        var products = await productsQuery.ToListAsync();
+        var categories = await productsQuery
+            .Select(x => new
+            {
+                x.Category.Id,
+                x.Category.Name
+            })
+            .Distinct()
+            .OrderBy(x => x.Name)
+            .Select(x => new FilterOptionDto
+            {
+                Id = x.Id,
+                Name = x.Name
+            })
+            .ToListAsync(cancellationToken);
+
+        var brands = await productsQuery
+            .Select(x => new
+            {
+                x.Brand.Id,
+                x.Brand.Name,
+                x.Brand.ImageUrl
+            })
+            .Distinct()
+            .OrderBy(x => x.Name)
+            .Select(x => new FilterOptionDto
+            {
+                Id = x.Id,
+                Name = x.Name,
+                ImageUrl = x.ImageUrl
+            })
+            .ToListAsync(cancellationToken);
+
+        var sizes = await _context.ProductVariants
+            .AsNoTracking()
+            .Where(variant =>
+                variant.IsActive &&
+                variant.StockCount > 0 &&
+                productsQuery.Any(product =>
+                    product.Id == variant.ProductId))
+            .Select(variant => new
+            {
+                variant.Size.Id,
+                Name = variant.Size.Value
+            })
+            .Distinct()
+            .OrderBy(x => x.Name)
+            .Select(x => new FilterOptionDto
+            {
+                Id = x.Id,
+                Name = x.Name
+            })
+            .ToListAsync(cancellationToken);
+
+        var colors = await _context.ProductVariants
+            .AsNoTracking()
+            .Where(variant =>
+                variant.IsActive &&
+                variant.StockCount > 0 &&
+                productsQuery.Any(product =>
+                    product.Id == variant.ProductId))
+            .Select(variant => new
+            {
+                variant.Color.Id,
+                variant.Color.Name,
+                variant.Color.HexCode
+            })
+            .Distinct()
+            .OrderBy(x => x.Name)
+            .Select(x => new ColorFilterOptionDto
+            {
+                Id = x.Id,
+                Name = x.Name,
+                HexCode = x.HexCode
+            })
+            .ToListAsync(cancellationToken);
+
+        var models = await productsQuery
+            .Where(x => x.Model != null && x.Model != "")
+            .Select(x => x.Model!)
+            .Distinct()
+            .OrderBy(x => x)
+            .ToListAsync(cancellationToken);
+
+        var priceRange = await productsQuery
+            .Select(x => new
+            {
+                EffectivePrice =
+                    x.IsDiscounted &&
+                    x.DiscountPrice.HasValue
+                        ? x.DiscountPrice.Value
+                        : x.Price
+            })
+            .GroupBy(x => 1)
+            .Select(group => new
+            {
+                MinPrice = group.Min(x => x.EffectivePrice),
+                MaxPrice = group.Max(x => x.EffectivePrice)
+            })
+            .FirstOrDefaultAsync(cancellationToken);
 
         var options = new ProductFilterOptionsDto
         {
-            Categories = products
-                .Select(x => x.Category)
-                .DistinctBy(x => x.Id)
-                .OrderBy(x => x.Name)
-                .Select(x => new FilterOptionDto
-                {
-                    Id = x.Id,
-                    Name = x.Name
-                })
-                .ToList(),
-
-            Brands = products
-                .Select(x => x.Brand)
-                .DistinctBy(x => x.Id)
-                .OrderBy(x => x.Name)
-                .Select(x => new FilterOptionDto
-                {
-                    Id = x.Id,
-                    Name = x.Name,
-                    ImageUrl = x.ImageUrl
-                })
-                .ToList(),
-
-            Sizes = products
-                .SelectMany(x => x.Variants)
-                .Where(v => v.IsActive && v.StockCount > 0)
-                .Select(v => v.Size)
-                .DistinctBy(x => x.Id)
-                .OrderBy(x => x.Value)
-                .Select(x => new FilterOptionDto
-                {
-                    Id = x.Id,
-                    Name = x.Value
-                })
-                .ToList(),
-
-            Colors = products
-                .SelectMany(x => x.Variants)
-                .Where(v => v.IsActive && v.StockCount > 0)
-                .Select(v => v.Color)
-                .DistinctBy(x => x.Id)
-                .OrderBy(x => x.Name)
-                .Select(x => new ColorFilterOptionDto
-                {
-                    Id = x.Id,
-                    Name = x.Name,
-                    HexCode = x.HexCode
-                })
-                .ToList(),
-
-            Models = products
-                .Where(x => !string.IsNullOrWhiteSpace(x.Model))
-                .Select(x => x.Model!)
-                .Distinct()
-                .OrderBy(x => x)
-                .ToList(),
-
-            MinPrice = products.Any()
-                ? products.Min(x => x.IsDiscounted && x.DiscountPrice.HasValue
-                    ? x.DiscountPrice.Value
-                    : x.Price)
-                : 0,
-
-            MaxPrice = products.Any()
-                ? products.Max(x => x.IsDiscounted && x.DiscountPrice.HasValue
-                    ? x.DiscountPrice.Value
-                    : x.Price)
-                : 0
+            Categories = categories,
+            Brands = brands,
+            Sizes = sizes,
+            Colors = colors,
+            Models = models,
+            MinPrice = priceRange?.MinPrice ?? 0,
+            MaxPrice = priceRange?.MaxPrice ?? 0
         };
 
-        return Ok(ApiResponse<ProductFilterOptionsDto>.Ok(options));
+        return Ok(
+            ApiResponse<ProductFilterOptionsDto>.Ok(options));
     }
 }

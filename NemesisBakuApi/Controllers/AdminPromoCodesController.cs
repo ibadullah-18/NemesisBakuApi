@@ -1,4 +1,5 @@
-﻿using Microsoft.AspNetCore.Authorization;
+﻿using System.Security.Claims;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using NemesisBakuApi.Data;
@@ -6,7 +7,6 @@ using NemesisBakuApi.DTOs.PromoCode;
 using NemesisBakuApi.Entities;
 using NemesisBakuApi.Helpers;
 using NemesisBakuApi.Services.Interfaces;
-using System.Security.Claims;
 
 namespace NemesisBakuApi.Controllers;
 
@@ -27,15 +27,65 @@ public class AdminPromoCodesController : ControllerBase
     }
 
     [HttpPost]
-    public async Task<IActionResult> Create(PromoCodeCreateDto dto)
+    public async Task<IActionResult> Create(
+        PromoCodeCreateDto dto,
+        CancellationToken cancellationToken)
     {
-        var code = dto.Code.Trim().ToUpper();
+        if (string.IsNullOrWhiteSpace(dto.Code))
+        {
+            return BadRequest(
+                ApiResponse<string>.Fail(
+                    "Promo kod boş ola bilməz"));
+        }
 
-        if (await _context.PromoCodes.AnyAsync(x => x.Code == code))
-            return BadRequest(ApiResponse<string>.Fail("Promo kod artıq mövcuddur"));
+        var code = dto.Code
+            .Trim()
+            .ToUpperInvariant();
+
+        var exists = await _context.PromoCodes
+            .AsNoTracking()
+            .AnyAsync(
+                x => x.Code == code,
+                cancellationToken);
+
+        if (exists)
+        {
+            return BadRequest(
+                ApiResponse<string>.Fail(
+                    "Promo kod artıq mövcuddur"));
+        }
 
         if (dto.DiscountValue <= 0)
-            return BadRequest(ApiResponse<string>.Fail("Endirim dəyəri düzgün deyil"));
+        {
+            return BadRequest(
+                ApiResponse<string>.Fail(
+                    "Endirim dəyəri düzgün deyil"));
+        }
+
+        if (dto.UsageLimit.HasValue &&
+            dto.UsageLimit.Value <= 0)
+        {
+            return BadRequest(
+                ApiResponse<string>.Fail(
+                    "İstifadə limiti düzgün deyil"));
+        }
+
+        if (dto.MinOrderAmount.HasValue &&
+            dto.MinOrderAmount.Value < 0)
+        {
+            return BadRequest(
+                ApiResponse<string>.Fail(
+                    "Minimum sifariş məbləği düzgün deyil"));
+        }
+
+        if (dto.EndDate.HasValue &&
+            dto.EndDate.Value < dto.StartDate)
+        {
+            return BadRequest(
+                ApiResponse<string>.Fail(
+                    "Bitmə tarixi başlanğıc tarixindən " +
+                    "əvvəl ola bilməz"));
+        }
 
         var promo = new PromoCode
         {
@@ -50,72 +100,91 @@ public class AdminPromoCodesController : ControllerBase
         };
 
         _context.PromoCodes.Add(promo);
-        await _context.SaveChangesAsync();
+
+        await _context.SaveChangesAsync(
+            cancellationToken);
 
         await WriteAuditLogAsync(
             "Create",
-            "PromoCode",
-            promo.Id.ToString(),
+            promo,
             $"Promo kod yaradıldı: {promo.Code}");
 
-        return Ok(ApiResponse<Guid>.Ok(promo.Id, "Promo kod yaradıldı"));
+        return Ok(
+            ApiResponse<Guid>.Ok(
+                promo.Id,
+                "Promo kod yaradıldı"));
     }
 
     [HttpGet]
-    public async Task<IActionResult> GetAll()
+    public async Task<IActionResult> GetAll(
+        CancellationToken cancellationToken)
     {
         var promos = await _context.PromoCodes
+            .AsNoTracking()
             .OrderByDescending(x => x.CreatedAt)
-            .ToListAsync();
+            .ToListAsync(cancellationToken);
 
-        return Ok(ApiResponse<object>.Ok(promos));
+        return Ok(
+            ApiResponse<object>.Ok(promos));
     }
 
-    [HttpDelete("{id}")]
-    public async Task<IActionResult> Delete(Guid id)
+    [HttpDelete("{id:guid}")]
+    public async Task<IActionResult> Delete(
+        Guid id,
+        CancellationToken cancellationToken)
     {
-        var promo = await _context.PromoCodes.FirstOrDefaultAsync(x => x.Id == id);
+        var promo = await _context.PromoCodes
+            .FirstOrDefaultAsync(
+                x => x.Id == id,
+                cancellationToken);
 
         if (promo == null)
-            return NotFound(ApiResponse<string>.Fail("Promo kod tapılmadı"));
+        {
+            return NotFound(
+                ApiResponse<string>.Fail(
+                    "Promo kod tapılmadı"));
+        }
 
         promo.IsDeleted = true;
         promo.UpdatedAt = DateTime.UtcNow;
 
-        await _context.SaveChangesAsync();
+        await _context.SaveChangesAsync(
+            cancellationToken);
 
         await WriteAuditLogAsync(
             "Delete",
-            "PromoCode",
-            promo.Id.ToString(),
+            promo,
             $"Promo kod silindi: {promo.Code}");
 
-        return Ok(ApiResponse<string>.Ok("Promo kod silindi"));
+        return Ok(
+            ApiResponse<string>.Ok(
+                "Promo kod silindi"));
     }
 
     private Guid? GetUserIdOrNull()
     {
-        var userId = User.FindFirstValue(ClaimTypes.NameIdentifier);
+        var value = User.FindFirstValue(
+            ClaimTypes.NameIdentifier);
 
-        if (string.IsNullOrWhiteSpace(userId))
-            return null;
-
-        return Guid.Parse(userId);
+        return Guid.TryParse(value, out var userId)
+            ? userId
+            : null;
     }
 
     private async Task WriteAuditLogAsync(
         string action,
-        string entityName,
-        string? entityId,
-        string? description)
+        PromoCode promo,
+        string description)
     {
         await _auditLogService.CreateAsync(
             GetUserIdOrNull(),
             action,
-            entityName,
-            entityId,
+            "PromoCode",
+            promo.Id.ToString(),
             description,
-            HttpContext.Connection.RemoteIpAddress?.ToString(),
+            HttpContext.Connection
+                .RemoteIpAddress?
+                .ToString(),
             Request.Headers.UserAgent.ToString());
     }
 }

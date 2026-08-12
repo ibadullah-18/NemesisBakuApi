@@ -4,8 +4,12 @@ public class UserListDto
 {
     public Guid Id { get; set; }
 
-    public string FullName { get; set; } = null!;
-    public string PhoneNumber { get; set; } = null!;
+    public string FullName { get; set; } =
+        null!;
+
+    public string PhoneNumber { get; set; } =
+        null!;
+
     public string? Email { get; set; }
 
     public bool IsActive { get; set; }
@@ -14,5 +18,6 @@ public class UserListDto
     public DateTime? LastLoginAt { get; set; }
     public DateTime CreatedAt { get; set; }
 
-    public IList<string> Roles { get; set; } = new List<string>();
+    public IList<string> Roles { get; set; } =
+        new List<string>();
 }

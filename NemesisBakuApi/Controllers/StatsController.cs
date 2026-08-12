@@ -23,121 +23,220 @@ public class StatsController : ControllerBase
 
     private Guid? GetUserIdOrNull()
     {
-        var userId = User.FindFirstValue(ClaimTypes.NameIdentifier);
+        var userIdValue = User.FindFirstValue(
+            ClaimTypes.NameIdentifier);
 
-        if (string.IsNullOrWhiteSpace(userId))
+        if (string.IsNullOrWhiteSpace(userIdValue))
+        {
             return null;
+        }
 
-        return Guid.Parse(userId);
+        return Guid.TryParse(
+            userIdValue,
+            out var userId)
+                ? userId
+                : null;
     }
 
     [HttpPost("track-visit")]
-    public async Task<IActionResult> TrackVisit(TrackVisitDto dto)
+    public async Task<IActionResult> TrackVisit(
+        TrackVisitDto dto,
+        CancellationToken cancellationToken)
     {
         if (string.IsNullOrWhiteSpace(dto.VisitorId))
-            return BadRequest(ApiResponse<string>.Fail("VisitorId boş ola bilməz"));
+        {
+            return BadRequest(
+                ApiResponse<string>.Fail(
+                    "VisitorId boş ola bilməz"));
+        }
 
         var visit = new SiteVisit
         {
             UserId = GetUserIdOrNull(),
             VisitorId = dto.VisitorId,
             PageUrl = dto.PageUrl,
-            IpAddress = HttpContext.Connection.RemoteIpAddress?.ToString(),
-            UserAgent = Request.Headers.UserAgent.ToString(),
+
+            IpAddress = HttpContext
+                .Connection
+                .RemoteIpAddress?
+                .ToString(),
+
+            UserAgent = Request
+                .Headers
+                .UserAgent
+                .ToString(),
+
             VisitedAt = DateTime.UtcNow
         };
 
         _context.SiteVisits.Add(visit);
-        await _context.SaveChangesAsync();
 
-        return Ok(ApiResponse<string>.Ok("Visit qeydə alındı"));
+        await _context.SaveChangesAsync(
+            cancellationToken);
+
+        return Ok(
+            ApiResponse<string>.Ok(
+                "Visit qeydə alındı"));
     }
 
     [Authorize(Roles = "SuperAdmin")]
     [HttpGet("dashboard")]
-    public async Task<IActionResult> GetDashboardStats()
+    public async Task<IActionResult> GetDashboardStats(
+        CancellationToken cancellationToken)
     {
-        var totalUsers = await _context.Users
-            .CountAsync(x => !x.IsDeleted);
+        var userStats = await _context.Users
+            .AsNoTracking()
+            .Where(x => !x.IsDeleted)
+            .GroupBy(x => 1)
+            .Select(group => new
+            {
+                Total = group.Count(),
 
-        var activeUsers = await _context.Users
-            .CountAsync(x => !x.IsDeleted && x.IsActive);
+                Active = group.Count(
+                    x => x.IsActive)
+            })
+            .FirstOrDefaultAsync(
+                cancellationToken);
 
-        var totalOrders = await _context.Orders.CountAsync();
+        var orderStats = await _context.Orders
+            .AsNoTracking()
+            .GroupBy(x => 1)
+            .Select(group => new
+            {
+                Total = group.Count(),
 
-        var pendingOrders = await _context.Orders
-            .CountAsync(x => x.Status == OrderStatus.Pending);
+                Pending = group.Count(
+                    x => x.Status ==
+                         OrderStatus.Pending),
 
-        var confirmedOrders = await _context.Orders
-            .CountAsync(x => x.Status == OrderStatus.Confirmed);
+                Confirmed = group.Count(
+                    x => x.Status ==
+                         OrderStatus.Confirmed),
 
-        var onDeliveryOrders = await _context.Orders
-            .CountAsync(x => x.Status == OrderStatus.OnDelivery);
+                OnDelivery = group.Count(
+                    x => x.Status ==
+                         OrderStatus.OnDelivery),
 
-        var deliveredOrders = await _context.Orders
-            .CountAsync(x => x.Status == OrderStatus.Delivered);
+                Delivered = group.Count(
+                    x => x.Status ==
+                         OrderStatus.Delivered),
 
-        var cancelledOrders = await _context.Orders
-            .CountAsync(x =>
-                x.Status == OrderStatus.Cancelled ||
-                x.Status == OrderStatus.Rejected);
+                Cancelled = group.Count(
+                    x =>
+                        x.Status ==
+                        OrderStatus.Cancelled ||
+                        x.Status ==
+                        OrderStatus.Rejected),
 
-        var totalProducts = await _context.Products.CountAsync();
+                Revenue = group.Sum(
+                    x =>
+                        x.Status ==
+                        OrderStatus.Delivered
+                            ? x.TotalPrice
+                            : 0m)
+            })
+            .FirstOrDefaultAsync(
+                cancellationToken);
 
-        var activeProducts = await _context.Products
-            .CountAsync(x => x.IsActive);
+        var productStats = await _context.Products
+            .AsNoTracking()
+            .GroupBy(x => 1)
+            .Select(group => new
+            {
+                Total = group.Count(),
 
-        var lowStockProducts = await _context.ProductVariants
-            .Where(x => x.IsActive && x.StockCount > 0 && x.StockCount <= 2)
-            .Select(x => x.ProductId)
-            .Distinct()
-            .CountAsync();
+                Active = group.Count(
+                    x => x.IsActive)
+            })
+            .FirstOrDefaultAsync(
+                cancellationToken);
 
-        var totalRevenue = await _context.Orders
-            .Where(x => x.Status == OrderStatus.Delivered)
-            .SumAsync(x => x.TotalPrice);
+        var lowStockProducts =
+            await _context.ProductVariants
+                .AsNoTracking()
+                .Where(x =>
+                    x.IsActive &&
+                    x.StockCount > 0 &&
+                    x.StockCount <= 2)
+                .Select(x => x.ProductId)
+                .Distinct()
+                .CountAsync(cancellationToken);
 
-        var totalPageViews = await _context.SiteVisits.CountAsync();
+        var visitStats = await _context.SiteVisits
+            .AsNoTracking()
+            .GroupBy(x => 1)
+            .Select(group => new
+            {
+                Total = group.Count(),
 
-        var uniqueVisitors = await _context.SiteVisits
-            .Select(x => x.VisitorId)
-            .Distinct()
-            .CountAsync();
+                Unique = group
+                    .Select(x => x.VisitorId)
+                    .Distinct()
+                    .Count()
+            })
+            .FirstOrDefaultAsync(
+                cancellationToken);
 
-        var whatsappProductClicks = await _context.WhatsAppClickLogs
-            .CountAsync(x => x.ClickType == "ProductInquiry");
+        var whatsappStats =
+            await _context.WhatsAppClickLogs
+                .AsNoTracking()
+                .GroupBy(x => 1)
+                .Select(group => new
+                {
+                    Total = group.Count(),
 
-        var whatsappBasketClicks = await _context.WhatsAppClickLogs
-            .CountAsync(x => x.ClickType == "BasketInquiry");
+                    ProductClicks = group.Count(
+                        x => x.ClickType ==
+                             "ProductInquiry"),
 
-        var totalWhatsappClicks = await _context.WhatsAppClickLogs.CountAsync();
+                    BasketClicks = group.Count(
+                        x => x.ClickType ==
+                             "BasketInquiry")
+                })
+                .FirstOrDefaultAsync(
+                    cancellationToken);
 
         var dto = new DashboardStatsDto
         {
-            TotalUsers = totalUsers,
-            ActiveUsers = activeUsers,
+            TotalUsers = userStats?.Total ?? 0,
+            ActiveUsers = userStats?.Active ?? 0,
 
-            TotalOrders = totalOrders,
-            PendingOrders = pendingOrders,
-            ConfirmedOrders = confirmedOrders,
-            OnDeliveryOrders = onDeliveryOrders,
-            DeliveredOrders = deliveredOrders,
-            CancelledOrders = cancelledOrders,
+            TotalOrders = orderStats?.Total ?? 0,
+            PendingOrders =
+                orderStats?.Pending ?? 0,
+            ConfirmedOrders =
+                orderStats?.Confirmed ?? 0,
+            OnDeliveryOrders =
+                orderStats?.OnDelivery ?? 0,
+            DeliveredOrders =
+                orderStats?.Delivered ?? 0,
+            CancelledOrders =
+                orderStats?.Cancelled ?? 0,
 
-            TotalProducts = totalProducts,
-            ActiveProducts = activeProducts,
-            LowStockProducts = lowStockProducts,
+            TotalProducts =
+                productStats?.Total ?? 0,
+            ActiveProducts =
+                productStats?.Active ?? 0,
+            LowStockProducts =
+                lowStockProducts,
 
-            TotalRevenue = totalRevenue,
+            TotalRevenue =
+                orderStats?.Revenue ?? 0m,
 
-            TotalPageViews = totalPageViews,
-            UniqueVisitors = uniqueVisitors,
+            TotalPageViews =
+                visitStats?.Total ?? 0,
+            UniqueVisitors =
+                visitStats?.Unique ?? 0,
 
-            WhatsAppProductClicks = whatsappProductClicks,
-            WhatsAppBasketClicks = whatsappBasketClicks,
-            TotalWhatsAppClicks = totalWhatsappClicks
+            WhatsAppProductClicks =
+                whatsappStats?.ProductClicks ?? 0,
+            WhatsAppBasketClicks =
+                whatsappStats?.BasketClicks ?? 0,
+            TotalWhatsAppClicks =
+                whatsappStats?.Total ?? 0
         };
 
-        return Ok(ApiResponse<DashboardStatsDto>.Ok(dto));
+        return Ok(
+            ApiResponse<DashboardStatsDto>.Ok(dto));
     }
 }

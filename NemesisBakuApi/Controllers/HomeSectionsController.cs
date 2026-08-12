@@ -4,80 +4,94 @@ using NemesisBakuApi.Data;
 using NemesisBakuApi.DTOs.HomeSection;
 using NemesisBakuApi.Helpers;
 
+namespace NemesisBakuApi.Controllers;
+
 [ApiController]
 [Route("api/[controller]")]
 public class HomeSectionsController : ControllerBase
 {
     private readonly AppDbContext _context;
 
-    public HomeSectionsController(AppDbContext context)
+    public HomeSectionsController(
+        AppDbContext context)
     {
         _context = context;
     }
 
     [HttpGet("active")]
-    public async Task<IActionResult> GetActive()
+    public async Task<IActionResult> GetActive(
+        CancellationToken cancellationToken)
     {
         var now = DateTime.UtcNow;
 
         var sections = await _context.HomeSections
-
-            .Include(x => x.Products)
-                .ThenInclude(x => x.Product)
-                    .ThenInclude(x => x.Images)
-
+            .AsNoTracking()
+            .AsSplitQuery()
             .Where(x =>
                 x.IsActive &&
                 x.StartDate <= now &&
                 x.EndDate >= now)
-
             .OrderBy(x => x.DisplayOrder)
-
             .Select(x => new ActiveHomeSectionDto
             {
                 Id = x.Id,
-
                 Title = x.Title,
-
                 Subtitle = x.Subtitle,
-
                 DisplayOrder = x.DisplayOrder,
 
                 Products = x.Products
+                    .OrderBy(product =>
+                        product.Order)
+                    .Select(product =>
+                        new HomeSectionProductDto
+                        {
+                            Id = product.Product.Id,
 
-                    .OrderBy(p => p.Order)
+                            Name =
+                                product.Product.Name,
 
-                    .Select(p => new HomeSectionProductDto
-                    {
-                        Id = p.Product.Id,
+                            ProductCode =
+                                product.Product
+                                    .ProductCode,
 
-                        Name = p.Product.Name,
+                            Price =
+                                product.Product.Price,
 
-                        ProductCode = p.Product.ProductCode,
+                            DiscountPrice =
+                                product.Product
+                                    .DiscountPrice,
 
-                        Price = p.Product.Price,
+                            IsDiscounted =
+                                product.Product
+                                    .DiscountPrice
+                                    .HasValue &&
+                                product.Product
+                                    .DiscountPrice
+                                    .Value > 0 &&
+                                product.Product
+                                    .DiscountPrice
+                                    .Value <
+                                product.Product.Price,
 
-                        DiscountPrice = p.Product.DiscountPrice,
+                            ImageUrl =
+                                product.Product.Images
+                                    .OrderByDescending(
+                                        image =>
+                                            image.IsMain)
+                                    .ThenBy(
+                                        image =>
+                                            image.Order)
+                                    .Select(
+                                        image =>
+                                            image.ImageUrl)
+                                    .FirstOrDefault()
+                        })
+                    .ToList()
+            })
+            .ToListAsync(cancellationToken);
 
-                        IsDiscounted =
-                            p.Product.DiscountPrice.HasValue &&
-                            p.Product.DiscountPrice.Value > 0 &&
-                            p.Product.DiscountPrice.Value < p.Product.Price,
-
-                        ImageUrl = p.Product.Images
-
-                            .OrderByDescending(i => i.IsMain)
-
-                            .ThenBy(i => i.Order)
-
-                            .Select(i => i.ImageUrl)
-
-                            .FirstOrDefault()
-
-                    }).ToList()
-
-            }).ToListAsync();
-
-        return Ok(ApiResponse<List<ActiveHomeSectionDto>>.Ok(sections));
+        return Ok(
+            ApiResponse<List<ActiveHomeSectionDto>>
+                .Ok(sections));
     }
 }

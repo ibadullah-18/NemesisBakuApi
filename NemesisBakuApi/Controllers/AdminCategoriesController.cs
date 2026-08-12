@@ -15,16 +15,30 @@ public class AdminCategoriesController : ControllerBase
 {
     private readonly AppDbContext _context;
 
-    public AdminCategoriesController(AppDbContext context)
+    public AdminCategoriesController(
+        AppDbContext context)
     {
         _context = context;
     }
 
     [HttpPost]
-    public async Task<IActionResult> Create(CategoryCreateDto dto)
+    public async Task<IActionResult> Create(
+        CategoryCreateDto dto,
+        CancellationToken cancellationToken)
     {
-        if (await _context.Categories.AnyAsync(x => x.Name == dto.Name))
-            return BadRequest(ApiResponse<string>.Fail("Kateqoriya artıq mövcuddur"));
+        var categoryExists =
+            await _context.Categories
+                .AsNoTracking()
+                .AnyAsync(
+                    x => x.Name == dto.Name,
+                    cancellationToken);
+
+        if (categoryExists)
+        {
+            return BadRequest(
+                ApiResponse<string>.Fail(
+                    "Kateqoriya artıq mövcuddur"));
+        }
 
         var category = new Category
         {
@@ -33,41 +47,69 @@ public class AdminCategoriesController : ControllerBase
         };
 
         _context.Categories.Add(category);
-        await _context.SaveChangesAsync();
 
-        return Ok(ApiResponse<Guid>.Ok(category.Id));
+        await _context.SaveChangesAsync(
+            cancellationToken);
+
+        return Ok(
+            ApiResponse<Guid>.Ok(category.Id));
     }
 
     [HttpGet]
-    public async Task<IActionResult> GetAll()
+    public async Task<IActionResult> GetAll(
+        CancellationToken cancellationToken)
     {
-        return Ok(ApiResponse<object>.Ok(
+        var categories =
             await _context.Categories
+                .AsNoTracking()
                 .OrderBy(x => x.Name)
-                .ToListAsync()));
+                .ToListAsync(cancellationToken);
+
+        return Ok(
+            ApiResponse<object>.Ok(categories));
     }
 
-    [HttpDelete("{id}")]
-    public async Task<IActionResult> DeleteCategory(Guid id)
+    [HttpDelete("{id:guid}")]
+    public async Task<IActionResult> DeleteCategory(
+        Guid id,
+        CancellationToken cancellationToken)
     {
-        var category = await _context.Categories
-            .FirstOrDefaultAsync(x => x.Id == id);
+        var category =
+            await _context.Categories
+                .FirstOrDefaultAsync(
+                    x => x.Id == id,
+                    cancellationToken);
 
         if (category == null)
-            return NotFound(ApiResponse<string>.Fail("Kateqoriya tapılmadı"));
+        {
+            return NotFound(
+                ApiResponse<string>.Fail(
+                    "Kateqoriya tapılmadı"));
+        }
 
-        var hasProducts = await _context.Products
-            .AnyAsync(x => x.CategoryId == id);
+        var hasProducts =
+            await _context.Products
+                .AsNoTracking()
+                .AnyAsync(
+                    x => x.CategoryId == id,
+                    cancellationToken);
 
         if (hasProducts)
-            return BadRequest(ApiResponse<string>.Fail(
-                "Bu kateqoriyada məhsullar var, əvvəl məhsulları silin"));
+        {
+            return BadRequest(
+                ApiResponse<string>.Fail(
+                    "Bu kateqoriyada məhsullar var, " +
+                    "əvvəl məhsulları silin"));
+        }
 
         category.IsDeleted = true;
         category.UpdatedAt = DateTime.UtcNow;
 
-        await _context.SaveChangesAsync();
+        await _context.SaveChangesAsync(
+            cancellationToken);
 
-        return Ok(ApiResponse<string>.Ok("Kateqoriya silindi"));
+        return Ok(
+            ApiResponse<string>.Ok(
+                "Kateqoriya silindi"));
     }
 }

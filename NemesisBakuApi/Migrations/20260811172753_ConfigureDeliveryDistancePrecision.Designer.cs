@@ -3,6 +3,7 @@ using System;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Metadata;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using NemesisBakuApi.Data;
 
@@ -11,9 +12,11 @@ using NemesisBakuApi.Data;
 namespace NemesisBakuApi.Migrations
 {
     [DbContext(typeof(AppDbContext))]
-    partial class AppDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260811172753_ConfigureDeliveryDistancePrecision")]
+    partial class ConfigureDeliveryDistancePrecision
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder
@@ -736,11 +739,9 @@ namespace NemesisBakuApi.Migrations
                         .HasColumnType("datetime2");
 
                     b.Property<decimal?>("DeliveryDistanceKm")
-                        .HasPrecision(18, 2)
                         .HasColumnType("decimal(18,2)");
 
                     b.Property<decimal>("DeliveryPrice")
-                        .HasPrecision(18, 2)
                         .HasColumnType("decimal(18,2)");
 
                     b.Property<string>("DeliveryTimeRange")
@@ -759,11 +760,9 @@ namespace NemesisBakuApi.Migrations
                         .HasColumnType("bit");
 
                     b.Property<decimal?>("Latitude")
-                        .HasPrecision(18, 8)
                         .HasColumnType("decimal(18,8)");
 
                     b.Property<decimal?>("Longitude")
-                        .HasPrecision(18, 8)
                         .HasColumnType("decimal(18,8)");
 
                     b.Property<string>("Note")
@@ -777,7 +776,6 @@ namespace NemesisBakuApi.Migrations
                         .HasColumnType("int");
 
                     b.Property<decimal>("PromoDiscountAmount")
-                        .HasPrecision(18, 2)
                         .HasColumnType("decimal(18,2)");
 
                     b.Property<int>("Status")
@@ -790,11 +788,9 @@ namespace NemesisBakuApi.Migrations
                         .HasColumnType("datetime2");
 
                     b.Property<decimal>("TotalPrice")
-                        .HasPrecision(18, 2)
                         .HasColumnType("decimal(18,2)");
 
                     b.Property<decimal>("TotalProductPrice")
-                        .HasPrecision(18, 2)
                         .HasColumnType("decimal(18,2)");
 
                     b.Property<DateTime?>("UpdatedAt")
@@ -811,9 +807,7 @@ namespace NemesisBakuApi.Migrations
                     b.HasIndex("OrderNumber")
                         .IsUnique();
 
-                    b.HasIndex("Status", "CreatedAt");
-
-                    b.HasIndex("UserId", "CreatedAt");
+                    b.HasIndex("UserId");
 
                     b.ToTable("Orders");
                 });
@@ -865,11 +859,9 @@ namespace NemesisBakuApi.Migrations
                         .HasColumnType("nvarchar(max)");
 
                     b.Property<decimal>("TotalPrice")
-                        .HasPrecision(18, 2)
                         .HasColumnType("decimal(18,2)");
 
                     b.Property<decimal>("UnitPrice")
-                        .HasPrecision(18, 2)
                         .HasColumnType("decimal(18,2)");
 
                     b.Property<DateTime?>("UpdatedAt")
@@ -940,7 +932,6 @@ namespace NemesisBakuApi.Migrations
                         .HasColumnType("nvarchar(max)");
 
                     b.Property<decimal?>("DiscountPrice")
-                        .HasPrecision(18, 2)
                         .HasColumnType("decimal(18,2)");
 
                     b.Property<bool>("IsActive")
@@ -963,7 +954,6 @@ namespace NemesisBakuApi.Migrations
                         .HasColumnType("nvarchar(max)");
 
                     b.Property<decimal>("Price")
-                        .HasPrecision(18, 2)
                         .HasColumnType("decimal(18,2)");
 
                     b.Property<string>("ProductCode")
@@ -978,11 +968,9 @@ namespace NemesisBakuApi.Migrations
 
                     b.HasKey("Id");
 
-                    b.HasIndex("BrandId", "IsActive");
+                    b.HasIndex("BrandId");
 
-                    b.HasIndex("CategoryId", "IsActive");
-
-                    b.HasIndex("IsActive", "CreatedAt");
+                    b.HasIndex("CategoryId");
 
                     b.ToTable("Products");
                 });
@@ -1058,8 +1046,6 @@ namespace NemesisBakuApi.Migrations
 
                     b.HasIndex("SizeId");
 
-                    b.HasIndex("ProductId", "IsActive", "StockCount");
-
                     b.HasIndex("ProductId", "SizeId", "ColorId")
                         .IsUnique();
 
@@ -1083,7 +1069,6 @@ namespace NemesisBakuApi.Migrations
                         .HasColumnType("int");
 
                     b.Property<decimal>("DiscountValue")
-                        .HasPrecision(18, 2)
                         .HasColumnType("decimal(18,2)");
 
                     b.Property<DateTime?>("EndDate")
@@ -1096,7 +1081,6 @@ namespace NemesisBakuApi.Migrations
                         .HasColumnType("bit");
 
                     b.Property<decimal?>("MinOrderAmount")
-                        .HasPrecision(18, 2)
                         .HasColumnType("decimal(18,2)");
 
                     b.Property<DateTime>("StartDate")
@@ -1129,7 +1113,6 @@ namespace NemesisBakuApi.Migrations
                         .HasColumnType("datetime2");
 
                     b.Property<decimal>("DiscountAmount")
-                        .HasPrecision(18, 2)
                         .HasColumnType("decimal(18,2)");
 
                     b.Property<bool>("IsDeleted")
@@ -1319,15 +1302,11 @@ namespace NemesisBakuApi.Migrations
 
                     b.Property<string>("VisitorId")
                         .IsRequired()
-                        .HasColumnType("nvarchar(450)");
+                        .HasColumnType("nvarchar(max)");
 
                     b.HasKey("Id");
 
                     b.HasIndex("UserId");
-
-                    b.HasIndex("VisitedAt");
-
-                    b.HasIndex("VisitorId");
 
                     b.ToTable("SiteVisits");
                 });
@@ -1408,14 +1387,12 @@ namespace NemesisBakuApi.Migrations
                         .HasColumnType("bit");
 
                     b.Property<decimal?>("Latitude")
-                        .HasPrecision(18, 8)
                         .HasColumnType("decimal(18,8)");
 
                     b.Property<string>("LogoUrl")
                         .HasColumnType("nvarchar(max)");
 
                     b.Property<decimal?>("Longitude")
-                        .HasPrecision(18, 8)
                         .HasColumnType("decimal(18,8)");
 
                     b.Property<string>("MissionContent")
@@ -1592,11 +1569,9 @@ namespace NemesisBakuApi.Migrations
                         .HasColumnType("bit");
 
                     b.Property<decimal>("Latitude")
-                        .HasPrecision(18, 8)
                         .HasColumnType("decimal(18,8)");
 
                     b.Property<decimal>("Longitude")
-                        .HasPrecision(18, 8)
                         .HasColumnType("decimal(18,8)");
 
                     b.Property<string>("Note")
@@ -1627,7 +1602,7 @@ namespace NemesisBakuApi.Migrations
 
                     b.Property<string>("ClickType")
                         .IsRequired()
-                        .HasColumnType("nvarchar(450)");
+                        .HasColumnType("nvarchar(max)");
 
                     b.Property<DateTime>("CreatedAt")
                         .HasColumnType("datetime2");
@@ -1654,8 +1629,6 @@ namespace NemesisBakuApi.Migrations
                         .HasColumnType("uniqueidentifier");
 
                     b.HasKey("Id");
-
-                    b.HasIndex("ClickType");
 
                     b.HasIndex("ProductId");
 
@@ -1769,7 +1742,7 @@ namespace NemesisBakuApi.Migrations
                         .HasColumnType("datetime2");
 
                     b.Property<string>("Email")
-                        .HasColumnType("nvarchar(450)");
+                        .HasColumnType("nvarchar(max)");
 
                     b.Property<DateTime>("ExpiresAt")
                         .HasColumnType("datetime2");
@@ -1793,8 +1766,6 @@ namespace NemesisBakuApi.Migrations
                         .HasColumnType("datetime2");
 
                     b.HasKey("Id");
-
-                    b.HasIndex("Email", "Purpose", "IsUsed", "ExpiresAt");
 
                     b.ToTable("UserOtpCodes");
                 });

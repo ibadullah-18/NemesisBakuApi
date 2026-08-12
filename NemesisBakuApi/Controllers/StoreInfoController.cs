@@ -13,23 +13,36 @@ public class StoreInfoController : ControllerBase
 {
     private readonly AppDbContext _context;
 
-    public StoreInfoController(AppDbContext context)
+    public StoreInfoController(
+        AppDbContext context)
     {
         _context = context;
     }
 
     [HttpGet]
-    public async Task<IActionResult> Get()
+    public async Task<IActionResult> Get(
+        CancellationToken cancellationToken)
     {
-        var store = await _context.StoreInfos.FirstOrDefaultAsync();
+        var store = await _context.StoreInfos
+            .AsNoTracking()
+            .FirstOrDefaultAsync(
+                cancellationToken);
 
         if (store == null)
-            return NotFound(ApiResponse<string>.Fail("Store məlumatı tapılmadı"));
+        {
+            return NotFound(
+                ApiResponse<string>.Fail(
+                    "Store məlumatı tapılmadı"));
+        }
 
-        return Ok(ApiResponse<StoreInfoDto>.Ok(ToDto(store)));
+        var dto = ToDto(store);
+
+        return Ok(
+            ApiResponse<StoreInfoDto>.Ok(dto));
     }
 
-    private static StoreInfoDto ToDto(StoreInfo store)
+    private static StoreInfoDto ToDto(
+        StoreInfo store)
     {
         return new StoreInfoDto
         {
@@ -41,36 +54,55 @@ public class StoreInfoController : ControllerBase
             AboutTitle = store.AboutTitle,
             AboutContent = store.AboutContent,
 
-            MissionContent = store.MissionContent,
-            VisionContent = store.VisionContent,
-            WhyChooseUsContent = store.WhyChooseUsContent,
+            MissionContent =
+                store.MissionContent,
+            VisionContent =
+                store.VisionContent,
+            WhyChooseUsContent =
+                store.WhyChooseUsContent,
 
-            ReturnPolicyTitle = store.ReturnPolicyTitle,
-            ReturnPolicyContent = store.ReturnPolicyContent,
-            ExchangePolicyContent = store.ExchangePolicyContent,
-            ReturnExceptionsContent = store.ReturnExceptionsContent,
-            ReturnProcessContent = store.ReturnProcessContent,
+            ReturnPolicyTitle =
+                store.ReturnPolicyTitle,
+            ReturnPolicyContent =
+                store.ReturnPolicyContent,
+            ExchangePolicyContent =
+                store.ExchangePolicyContent,
+            ReturnExceptionsContent =
+                store.ReturnExceptionsContent,
+            ReturnProcessContent =
+                store.ReturnProcessContent,
 
-            DeliveryTitle = store.DeliveryTitle,
-            DeliveryContent = store.DeliveryContent,
-            DeliveryBakuText = store.DeliveryBakuText,
-            DeliveryAbsheronSumgaitText = store.DeliveryAbsheronSumgaitText,
-            DeliveryRegionsText = store.DeliveryRegionsText,
-            PaymentAndCheckText = store.PaymentAndCheckText,
+            DeliveryTitle =
+                store.DeliveryTitle,
+            DeliveryContent =
+                store.DeliveryContent,
+            DeliveryBakuText =
+                store.DeliveryBakuText,
+            DeliveryAbsheronSumgaitText =
+                store.DeliveryAbsheronSumgaitText,
+            DeliveryRegionsText =
+                store.DeliveryRegionsText,
+            PaymentAndCheckText =
+                store.PaymentAndCheckText,
 
             PhoneNumber = store.PhoneNumber,
-            WhatsAppNumber = store.WhatsAppNumber,
+            WhatsAppNumber =
+                store.WhatsAppNumber,
             Email = store.Email,
 
             Address = store.Address,
             Latitude = store.Latitude,
             Longitude = store.Longitude,
 
-            WorkingHours = store.WorkingHours,
+            WorkingHours =
+                store.WorkingHours,
 
-            InstagramUrl = store.InstagramUrl,
-            TikTokUrl = store.TikTokUrl,
-            FacebookUrl = store.FacebookUrl
+            InstagramUrl =
+                store.InstagramUrl,
+            TikTokUrl =
+                store.TikTokUrl,
+            FacebookUrl =
+                store.FacebookUrl
         };
     }
 }

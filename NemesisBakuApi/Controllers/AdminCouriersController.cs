@@ -18,7 +18,9 @@ public class AdminCouriersController : ControllerBase
     private readonly AppDbContext _context;
     private readonly IAuditLogService _auditLogService;
 
-    public AdminCouriersController(AppDbContext context, IAuditLogService auditLogService)
+    public AdminCouriersController(
+        AppDbContext context,
+        IAuditLogService auditLogService)
     {
         _context = context;
         _auditLogService = auditLogService;
@@ -26,15 +28,23 @@ public class AdminCouriersController : ControllerBase
 
     private Guid GetUserId()
     {
-        var userId = User.FindFirstValue(ClaimTypes.NameIdentifier);
-        if (string.IsNullOrWhiteSpace(userId)) throw new UnauthorizedAccessException();
-        return Guid.Parse(userId);
+        var value = User.FindFirstValue(
+            ClaimTypes.NameIdentifier);
+
+        if (!Guid.TryParse(value, out var userId))
+        {
+            throw new UnauthorizedAccessException();
+        }
+
+        return userId;
     }
 
     [HttpGet]
-    public async Task<IActionResult> GetAll()
+    public async Task<IActionResult> GetAll(
+        CancellationToken cancellationToken)
     {
         var couriers = await _context.CourierPhones
+            .AsNoTracking()
             .OrderByDescending(x => x.IsDefault)
             .ThenByDescending(x => x.CreatedAt)
             .Select(x => new CourierPhoneDto
@@ -44,28 +54,54 @@ public class AdminCouriersController : ControllerBase
                 PhoneNumber = x.PhoneNumber,
                 IsDefault = x.IsDefault
             })
-            .ToListAsync();
+            .ToListAsync(cancellationToken);
 
-        return Ok(ApiResponse<List<CourierPhoneDto>>.Ok(couriers));
+        return Ok(
+            ApiResponse<List<CourierPhoneDto>>
+                .Ok(couriers));
     }
 
     [HttpPost]
-    public async Task<IActionResult> Create(CreateCourierPhoneDto dto)
+    public async Task<IActionResult> Create(
+        CreateCourierPhoneDto dto,
+        CancellationToken cancellationToken)
     {
         if (string.IsNullOrWhiteSpace(dto.Title))
-            return BadRequest(ApiResponse<string>.Fail("Başlıq boş ola bilməz"));
+        {
+            return BadRequest(
+                ApiResponse<string>.Fail(
+                    "Başlıq boş ola bilməz"));
+        }
 
-        if (string.IsNullOrWhiteSpace(dto.PhoneNumber))
-            return BadRequest(ApiResponse<string>.Fail("Kuryer nömrəsi boş ola bilməz"));
+        if (string.IsNullOrWhiteSpace(
+                dto.PhoneNumber))
+        {
+            return BadRequest(
+                ApiResponse<string>.Fail(
+                    "Kuryer nömrəsi boş ola bilməz"));
+        }
 
-        var phone = NormalizePhone(dto.PhoneNumber);
+        var phone = NormalizePhone(
+            dto.PhoneNumber);
 
-        var exists = await _context.CourierPhones.AnyAsync(x => x.PhoneNumber == phone);
+        var exists = await _context.CourierPhones
+            .AsNoTracking()
+            .AnyAsync(
+                x => x.PhoneNumber == phone,
+                cancellationToken);
+
         if (exists)
-            return BadRequest(ApiResponse<string>.Fail("Bu kuryer nömrəsi artıq əlavə olunub"));
+        {
+            return BadRequest(
+                ApiResponse<string>.Fail(
+                    "Bu kuryer nömrəsi artıq əlavə olunub"));
+        }
 
         if (dto.IsDefault)
-            await ClearDefaultAsync();
+        {
+            await ClearDefaultAsync(
+                cancellationToken);
+        }
 
         var courier = new CourierPhone
         {
@@ -75,131 +111,217 @@ public class AdminCouriersController : ControllerBase
         };
 
         _context.CourierPhones.Add(courier);
-        await _context.SaveChangesAsync();
+
+        await _context.SaveChangesAsync(
+            cancellationToken);
 
         await WriteAuditLogAsync(
             "Create",
-            "CourierPhone",
-            courier.Id.ToString(),
-            $"Kuryer nömrəsi əlavə edildi: {courier.Title} - {courier.PhoneNumber}");
+            courier,
+            $"Kuryer nömrəsi əlavə edildi: " +
+            $"{courier.Title} - {courier.PhoneNumber}");
 
-        return Ok(ApiResponse<Guid>.Ok(courier.Id, "Kuryer nömrəsi əlavə olundu"));
+        return Ok(
+            ApiResponse<Guid>.Ok(
+                courier.Id,
+                "Kuryer nömrəsi əlavə olundu"));
     }
 
-    [HttpPut("{id}")]
-    public async Task<IActionResult> Update(Guid id, CreateCourierPhoneDto dto)
+    [HttpPut("{id:guid}")]
+    public async Task<IActionResult> Update(
+        Guid id,
+        CreateCourierPhoneDto dto,
+        CancellationToken cancellationToken)
     {
-        var courier = await _context.CourierPhones.FirstOrDefaultAsync(x => x.Id == id);
+        var courier = await _context.CourierPhones
+            .FirstOrDefaultAsync(
+                x => x.Id == id,
+                cancellationToken);
 
         if (courier == null)
-            return NotFound(ApiResponse<string>.Fail("Kuryer nömrəsi tapılmadı"));
+        {
+            return NotFound(
+                ApiResponse<string>.Fail(
+                    "Kuryer nömrəsi tapılmadı"));
+        }
 
         if (string.IsNullOrWhiteSpace(dto.Title))
-            return BadRequest(ApiResponse<string>.Fail("Başlıq boş ola bilməz"));
+        {
+            return BadRequest(
+                ApiResponse<string>.Fail(
+                    "Başlıq boş ola bilməz"));
+        }
 
-        if (string.IsNullOrWhiteSpace(dto.PhoneNumber))
-            return BadRequest(ApiResponse<string>.Fail("Kuryer nömrəsi boş ola bilməz"));
+        if (string.IsNullOrWhiteSpace(
+                dto.PhoneNumber))
+        {
+            return BadRequest(
+                ApiResponse<string>.Fail(
+                    "Kuryer nömrəsi boş ola bilməz"));
+        }
+
+        var phone = NormalizePhone(
+            dto.PhoneNumber);
+
+        var exists = await _context.CourierPhones
+            .AsNoTracking()
+            .AnyAsync(
+                x =>
+                    x.Id != id &&
+                    x.PhoneNumber == phone,
+                cancellationToken);
+
+        if (exists)
+        {
+            return BadRequest(
+                ApiResponse<string>.Fail(
+                    "Bu kuryer nömrəsi artıq əlavə olunub"));
+        }
 
         var oldTitle = courier.Title;
         var oldPhone = courier.PhoneNumber;
 
-        var phone = NormalizePhone(dto.PhoneNumber);
-
-        var exists = await _context.CourierPhones.AnyAsync(x => x.Id != id && x.PhoneNumber == phone);
-        if (exists)
-            return BadRequest(ApiResponse<string>.Fail("Bu kuryer nömrəsi artıq əlavə olunub"));
-
         if (dto.IsDefault)
-            await ClearDefaultAsync();
+        {
+            await ClearDefaultAsync(
+                cancellationToken);
+        }
 
         courier.Title = dto.Title.Trim();
         courier.PhoneNumber = phone;
         courier.IsDefault = dto.IsDefault;
         courier.UpdatedAt = DateTime.UtcNow;
 
-        await _context.SaveChangesAsync();
+        await _context.SaveChangesAsync(
+            cancellationToken);
 
         await WriteAuditLogAsync(
             "Update",
-            "CourierPhone",
-            courier.Id.ToString(),
-            $"Kuryer nömrəsi yeniləndi: {oldTitle}/{oldPhone} → {courier.Title}/{courier.PhoneNumber}");
+            courier,
+            $"Kuryer nömrəsi yeniləndi: " +
+            $"{oldTitle}/{oldPhone} → " +
+            $"{courier.Title}/{courier.PhoneNumber}");
 
-        return Ok(ApiResponse<string>.Ok("Kuryer nömrəsi yeniləndi"));
+        return Ok(
+            ApiResponse<string>.Ok(
+                "Kuryer nömrəsi yeniləndi"));
     }
 
-    [HttpPut("{id}/default")]
-    public async Task<IActionResult> SetDefault(Guid id)
+    [HttpPut("{id:guid}/default")]
+    public async Task<IActionResult> SetDefault(
+        Guid id,
+        CancellationToken cancellationToken)
     {
-        var courier = await _context.CourierPhones.FirstOrDefaultAsync(x => x.Id == id);
+        var courier = await _context.CourierPhones
+            .FirstOrDefaultAsync(
+                x => x.Id == id,
+                cancellationToken);
 
         if (courier == null)
-            return NotFound(ApiResponse<string>.Fail("Kuryer nömrəsi tapılmadı"));
+        {
+            return NotFound(
+                ApiResponse<string>.Fail(
+                    "Kuryer nömrəsi tapılmadı"));
+        }
 
-        await ClearDefaultAsync();
+        await ClearDefaultAsync(
+            cancellationToken);
 
         courier.IsDefault = true;
         courier.UpdatedAt = DateTime.UtcNow;
 
-        await _context.SaveChangesAsync();
+        await _context.SaveChangesAsync(
+            cancellationToken);
 
         await WriteAuditLogAsync(
             "SetDefault",
-            "CourierPhone",
-            courier.Id.ToString(),
-            $"Default kuryer nömrəsi seçildi: {courier.Title} - {courier.PhoneNumber}");
+            courier,
+            $"Default kuryer nömrəsi seçildi: " +
+            $"{courier.Title} - {courier.PhoneNumber}");
 
-        return Ok(ApiResponse<string>.Ok("Default kuryer nömrəsi seçildi"));
+        return Ok(
+            ApiResponse<string>.Ok(
+                "Default kuryer nömrəsi seçildi"));
     }
 
-    [HttpDelete("{id}")]
-    public async Task<IActionResult> Delete(Guid id)
+    [HttpDelete("{id:guid}")]
+    public async Task<IActionResult> Delete(
+        Guid id,
+        CancellationToken cancellationToken)
     {
-        var courier = await _context.CourierPhones.FirstOrDefaultAsync(x => x.Id == id);
+        var courier = await _context.CourierPhones
+            .FirstOrDefaultAsync(
+                x => x.Id == id,
+                cancellationToken);
 
         if (courier == null)
-            return NotFound(ApiResponse<string>.Fail("Kuryer nömrəsi tapılmadı"));
+        {
+            return NotFound(
+                ApiResponse<string>.Fail(
+                    "Kuryer nömrəsi tapılmadı"));
+        }
 
         courier.IsDeleted = true;
         courier.IsDefault = false;
         courier.UpdatedAt = DateTime.UtcNow;
 
-        await _context.SaveChangesAsync();
+        await _context.SaveChangesAsync(
+            cancellationToken);
 
         await WriteAuditLogAsync(
             "Delete",
-            "CourierPhone",
-            courier.Id.ToString(),
-            $"Kuryer nömrəsi silindi: {courier.Title} - {courier.PhoneNumber}");
+            courier,
+            $"Kuryer nömrəsi silindi: " +
+            $"{courier.Title} - {courier.PhoneNumber}");
 
-        return Ok(ApiResponse<string>.Ok("Kuryer nömrəsi silindi"));
+        return Ok(
+            ApiResponse<string>.Ok(
+                "Kuryer nömrəsi silindi"));
     }
 
-    private async Task ClearDefaultAsync()
+    private async Task ClearDefaultAsync(
+        CancellationToken cancellationToken)
     {
-        var defaults = await _context.CourierPhones.Where(x => x.IsDefault).ToListAsync();
+        var updatedAt = DateTime.UtcNow;
 
-        foreach (var item in defaults)
-        {
-            item.IsDefault = false;
-            item.UpdatedAt = DateTime.UtcNow;
-        }
+        await _context.CourierPhones
+            .Where(x => x.IsDefault)
+            .ExecuteUpdateAsync(
+                setters => setters
+                    .SetProperty(
+                        x => x.IsDefault,
+                        false)
+                    .SetProperty(
+                        x => x.UpdatedAt,
+                        updatedAt),
+                cancellationToken);
     }
 
-    private async Task WriteAuditLogAsync(string action, string entityName, string? entityId, string? description)
+    private async Task WriteAuditLogAsync(
+        string action,
+        CourierPhone courier,
+        string description)
     {
         await _auditLogService.CreateAsync(
             GetUserId(),
             action,
-            entityName,
-            entityId,
+            "CourierPhone",
+            courier.Id.ToString(),
             description,
-            HttpContext.Connection.RemoteIpAddress?.ToString(),
+            HttpContext.Connection
+                .RemoteIpAddress?
+                .ToString(),
             Request.Headers.UserAgent.ToString());
     }
 
-    private static string NormalizePhone(string phone)
+    private static string NormalizePhone(
+        string phone)
     {
-        return phone.Replace("+", "").Replace(" ", "").Replace("(", "").Replace(")", "").Replace("-", "");
+        return phone
+            .Replace("+", "")
+            .Replace(" ", "")
+            .Replace("(", "")
+            .Replace(")", "")
+            .Replace("-", "");
     }
 }
