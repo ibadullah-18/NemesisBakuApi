@@ -6,8 +6,13 @@ namespace NemesisBakuApi.Middlewares;
 
 public class ExceptionMiddleware
 {
+    private static readonly JsonSerializerOptions
+        JsonOptions = new(JsonSerializerDefaults.Web);
+
     private readonly RequestDelegate _next;
-    private readonly ILogger<ExceptionMiddleware> _logger;
+
+    private readonly ILogger<ExceptionMiddleware>
+        _logger;
 
     public ExceptionMiddleware(
         RequestDelegate next,
@@ -17,33 +22,93 @@ public class ExceptionMiddleware
         _logger = logger;
     }
 
-    public async Task InvokeAsync(HttpContext context)
+    public async Task InvokeAsync(
+        HttpContext context)
     {
         try
         {
             await _next(context);
         }
-        catch (UnauthorizedAccessException)
+        catch (OperationCanceledException)
+            when (context.RequestAborted
+                .IsCancellationRequested)
         {
-            context.Response.StatusCode = (int)HttpStatusCode.Unauthorized;
-            context.Response.ContentType = "application/json";
+            _logger.LogDebug(
+                "HTTP request client tərəfindən dayandırıldı. " +
+                "Path: {Path}",
+                context.Request.Path);
+        }
+        catch (UnauthorizedAccessException ex)
+        {
+            _logger.LogWarning(
+                ex,
+                "İcazəsiz giriş cəhdi. Path: {Path}",
+                context.Request.Path);
 
-            var response = ApiResponse<string>.Fail("İcazəsiz giriş");
+            await WriteErrorAsync(
+                context,
+                HttpStatusCode.Unauthorized,
+                "İcazəsiz giriş");
+        }
+        catch (BadHttpRequestException ex)
+        {
+            _logger.LogWarning(
+                ex,
+                "Yanlış HTTP sorğusu. Path: {Path}",
+                context.Request.Path);
 
-            await context.Response.WriteAsync(
-                JsonSerializer.Serialize(response));
+            await WriteErrorAsync(
+                context,
+                HttpStatusCode.BadRequest,
+                "Sorğu düzgün deyil");
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Unhandled exception baş verdi");
+            var traceId =
+                context.TraceIdentifier;
 
-            context.Response.StatusCode = (int)HttpStatusCode.InternalServerError;
-            context.Response.ContentType = "application/json";
+            _logger.LogError(
+                ex,
+                "Unhandled exception baş verdi. " +
+                "TraceId: {TraceId}, Path: {Path}, " +
+                "Method: {Method}",
+                traceId,
+                context.Request.Path,
+                context.Request.Method);
 
-            var response = ApiResponse<string>.Fail("Serverdə xəta baş verdi");
-
-            await context.Response.WriteAsync(
-                JsonSerializer.Serialize(response));
+            await WriteErrorAsync(
+                context,
+                HttpStatusCode.InternalServerError,
+                "Serverdə xəta baş verdi");
         }
+    }
+
+    private static async Task WriteErrorAsync(
+        HttpContext context,
+        HttpStatusCode statusCode,
+        string message)
+    {
+        if (context.Response.HasStarted)
+        {
+            context.Abort();
+            return;
+        }
+
+        context.Response.Clear();
+
+        context.Response.StatusCode =
+            (int)statusCode;
+
+        context.Response.ContentType =
+            "application/json; charset=utf-8";
+
+        var response =
+            ApiResponse<string>.Fail(message);
+
+        await context.Response.WriteAsync(
+            JsonSerializer.Serialize(
+                response,
+                JsonOptions),
+            context.RequestAborted);
     }
 }

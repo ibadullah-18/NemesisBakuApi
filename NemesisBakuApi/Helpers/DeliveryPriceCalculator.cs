@@ -4,44 +4,137 @@ namespace NemesisBakuApi.Helpers;
 
 public static class DeliveryPriceCalculator
 {
+    private const double EarthRadiusKm = 6371d;
+
     public static decimal CalculateDistanceKm(
         decimal storeLat,
         decimal storeLng,
         decimal customerLat,
         decimal customerLng)
     {
-        const double earthRadiusKm = 6371;
+        ValidateCoordinates(
+            storeLat,
+            storeLng,
+            nameof(storeLat),
+            nameof(storeLng));
 
-        var lat1 = DegreesToRadians((double)storeLat);
-        var lon1 = DegreesToRadians((double)storeLng);
-        var lat2 = DegreesToRadians((double)customerLat);
-        var lon2 = DegreesToRadians((double)customerLng);
+        ValidateCoordinates(
+            customerLat,
+            customerLng,
+            nameof(customerLat),
+            nameof(customerLng));
 
-        var dLat = lat2 - lat1;
-        var dLon = lon2 - lon1;
+        var storeLatitude =
+            DegreesToRadians((double)storeLat);
 
-        var a =
-            Math.Sin(dLat / 2) * Math.Sin(dLat / 2) +
-            Math.Cos(lat1) * Math.Cos(lat2) *
-            Math.Sin(dLon / 2) * Math.Sin(dLon / 2);
+        var storeLongitude =
+            DegreesToRadians((double)storeLng);
 
-        var c = 2 * Math.Atan2(Math.Sqrt(a), Math.Sqrt(1 - a));
+        var customerLatitude =
+            DegreesToRadians((double)customerLat);
 
-        return Math.Round((decimal)(earthRadiusKm * c), 2);
+        var customerLongitude =
+            DegreesToRadians((double)customerLng);
+
+        var latitudeDifference =
+            customerLatitude - storeLatitude;
+
+        var longitudeDifference =
+            customerLongitude - storeLongitude;
+
+        var latitudeSin =
+            Math.Sin(latitudeDifference / 2d);
+
+        var longitudeSin =
+            Math.Sin(longitudeDifference / 2d);
+
+        var haversine =
+            latitudeSin * latitudeSin +
+            Math.Cos(storeLatitude) *
+            Math.Cos(customerLatitude) *
+            longitudeSin * longitudeSin;
+
+        haversine = Math.Clamp(
+            haversine,
+            0d,
+            1d);
+
+        var centralAngle = 2d * Math.Atan2(
+            Math.Sqrt(haversine),
+            Math.Sqrt(1d - haversine));
+
+        var distance =
+            EarthRadiusKm * centralAngle;
+
+        return Math.Round(
+            (decimal)distance,
+            2,
+            MidpointRounding.AwayFromZero);
     }
 
-    public static decimal CalculateDeliveryPrice(decimal distanceKm, DeliverySettings settings)
+    public static decimal CalculateDeliveryPrice(
+        decimal distanceKm,
+        DeliverySettings settings)
     {
-        var price = distanceKm * settings.PricePerKm;
+        ArgumentNullException.ThrowIfNull(settings);
 
-        if (price < settings.MinimumPrice)
-            price = settings.MinimumPrice;
+        if (distanceKm < 0)
+        {
+            throw new ArgumentOutOfRangeException(
+                nameof(distanceKm),
+                "Məsafə mənfi ola bilməz.");
+        }
 
-        return Math.Round(price, 2);
+        if (settings.MinimumPrice < 0)
+        {
+            throw new InvalidOperationException(
+                "Minimum çatdırılma qiyməti " +
+                "mənfi ola bilməz.");
+        }
+
+        if (settings.PricePerKm < 0)
+        {
+            throw new InvalidOperationException(
+                "Kilometr qiyməti mənfi ola bilməz.");
+        }
+
+        var calculatedPrice =
+            distanceKm * settings.PricePerKm;
+
+        var finalPrice = Math.Max(
+            calculatedPrice,
+            settings.MinimumPrice);
+
+        return Math.Round(
+            finalPrice,
+            2,
+            MidpointRounding.AwayFromZero);
     }
 
-    private static double DegreesToRadians(double degrees)
+    private static void ValidateCoordinates(
+        decimal latitude,
+        decimal longitude,
+        string latitudeParameter,
+        string longitudeParameter)
     {
-        return degrees * Math.PI / 180;
+        if (latitude is < -90 or > 90)
+        {
+            throw new ArgumentOutOfRangeException(
+                latitudeParameter,
+                "Enlik -90 və 90 arasında olmalıdır.");
+        }
+
+        if (longitude is < -180 or > 180)
+        {
+            throw new ArgumentOutOfRangeException(
+                longitudeParameter,
+                "Uzunluq -180 və 180 arasında olmalıdır.");
+        }
+    }
+
+    private static double DegreesToRadians(
+        double degrees)
+    {
+        return degrees * Math.PI / 180d;
     }
 }

@@ -1,4 +1,5 @@
-﻿using NemesisBakuApi.Enums;
+﻿using System.ComponentModel.DataAnnotations;
+using NemesisBakuApi.Enums;
 
 namespace NemesisBakuApi.Entities;
 
@@ -35,15 +36,23 @@ public class Order : BaseEntity
     public decimal PromoDiscountAmount { get; set; }
     public decimal TotalPrice { get; set; }
 
-    public bool StockReturned { get; set; } = false;
+    public bool StockReturned { get; set; }
     public DateTime? StockReturnedAt { get; set; }
 
     public OrderStatus Status { get; set; } = OrderStatus.Pending;
 
-    public bool IsWhatsappMessageSent { get; set; } = false;
+    public bool IsWhatsappMessageSent { get; set; }
     public DateTime? WhatsappMessageSentAt { get; set; }
 
-    public ICollection<OrderItem> Items { get; set; } = new List<OrderItem>();
-    public ICollection<OrderStatusHistory> StatusHistories { get; set; } = new List<OrderStatusHistory>();
-    public ICollection<TelegramOrderNotification> TelegramNotifications { get; set; } = new List<TelegramOrderNotification>();
+    [Timestamp]
+    public byte[] RowVersion { get; set; } = Array.Empty<byte>();
+
+    public ICollection<OrderItem> Items { get; set; }
+        = new List<OrderItem>();
+
+    public ICollection<OrderStatusHistory> StatusHistories { get; set; }
+        = new List<OrderStatusHistory>();
+
+    public ICollection<TelegramOrderNotification> TelegramNotifications
+    { get; set; } = new List<TelegramOrderNotification>();
 }

@@ -3,6 +3,7 @@ using System;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Metadata;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using NemesisBakuApi.Data;
 
@@ -11,9 +12,11 @@ using NemesisBakuApi.Data;
 namespace NemesisBakuApi.Migrations
 {
     [DbContext(typeof(AppDbContext))]
-    partial class AppDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260812202404_AddOrderConcurrencyProtection")]
+    partial class AddOrderConcurrencyProtection
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder
@@ -907,8 +910,7 @@ namespace NemesisBakuApi.Migrations
                         .HasColumnType("int");
 
                     b.Property<string>("Note")
-                        .HasMaxLength(500)
-                        .HasColumnType("nvarchar(500)");
+                        .HasColumnType("nvarchar(max)");
 
                     b.Property<int>("OldStatus")
                         .HasColumnType("int");
@@ -923,7 +925,7 @@ namespace NemesisBakuApi.Migrations
 
                     b.HasIndex("ChangedByUserId");
 
-                    b.HasIndex("OrderId", "CreatedAt");
+                    b.HasIndex("OrderId");
 
                     b.ToTable("OrderStatusHistories");
                 });
@@ -1170,9 +1172,9 @@ namespace NemesisBakuApi.Migrations
 
                     b.HasIndex("OrderId");
 
-                    b.HasIndex("PromoCodeId", "CreatedAt");
+                    b.HasIndex("PromoCodeId");
 
-                    b.HasIndex("UserId", "CreatedAt");
+                    b.HasIndex("UserId");
 
                     b.ToTable("PromoCodeUsages");
                 });
@@ -1740,8 +1742,7 @@ namespace NemesisBakuApi.Migrations
                         .HasColumnType("datetime2");
 
                     b.Property<string>("IpAddress")
-                        .HasMaxLength(64)
-                        .HasColumnType("nvarchar(64)");
+                        .HasColumnType("nvarchar(max)");
 
                     b.Property<bool>("IsDeleted")
                         .HasColumnType("bit");
@@ -1751,29 +1752,26 @@ namespace NemesisBakuApi.Migrations
 
                     b.Property<string>("ProductLink")
                         .IsRequired()
-                        .HasMaxLength(1000)
-                        .HasColumnType("nvarchar(1000)");
+                        .HasColumnType("nvarchar(max)");
 
                     b.Property<string>("SellerPhoneNumber")
                         .IsRequired()
-                        .HasMaxLength(30)
-                        .HasColumnType("nvarchar(30)");
+                        .HasColumnType("nvarchar(max)");
 
                     b.Property<DateTime?>("UpdatedAt")
                         .HasColumnType("datetime2");
 
                     b.Property<string>("UserAgent")
-                        .HasMaxLength(1000)
-                        .HasColumnType("nvarchar(1000)");
+                        .HasColumnType("nvarchar(max)");
 
                     b.Property<Guid?>("UserId")
                         .HasColumnType("uniqueidentifier");
 
                     b.HasKey("Id");
 
-                    b.HasIndex("UserId");
+                    b.HasIndex("ProductId");
 
-                    b.HasIndex("ProductId", "CreatedAt");
+                    b.HasIndex("UserId");
 
                     b.ToTable("WhatsAppProductInquiries");
                 });
@@ -1976,13 +1974,12 @@ namespace NemesisBakuApi.Migrations
                 {
                     b.HasOne("NemesisBakuApi.Entities.AppUser", "ChangedByUser")
                         .WithMany()
-                        .HasForeignKey("ChangedByUserId")
-                        .OnDelete(DeleteBehavior.NoAction);
+                        .HasForeignKey("ChangedByUserId");
 
                     b.HasOne("NemesisBakuApi.Entities.Order", "Order")
                         .WithMany("StatusHistories")
                         .HasForeignKey("OrderId")
-                        .OnDelete(DeleteBehavior.NoAction)
+                        .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired();
 
                     b.Navigation("ChangedByUser");
@@ -2051,19 +2048,18 @@ namespace NemesisBakuApi.Migrations
                 {
                     b.HasOne("NemesisBakuApi.Entities.Order", "Order")
                         .WithMany()
-                        .HasForeignKey("OrderId")
-                        .OnDelete(DeleteBehavior.NoAction);
+                        .HasForeignKey("OrderId");
 
                     b.HasOne("NemesisBakuApi.Entities.PromoCode", "PromoCode")
                         .WithMany("Usages")
                         .HasForeignKey("PromoCodeId")
-                        .OnDelete(DeleteBehavior.NoAction)
+                        .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired();
 
                     b.HasOne("NemesisBakuApi.Entities.AppUser", "User")
                         .WithMany()
                         .HasForeignKey("UserId")
-                        .OnDelete(DeleteBehavior.NoAction)
+                        .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired();
 
                     b.Navigation("Order");
@@ -2171,13 +2167,12 @@ namespace NemesisBakuApi.Migrations
                     b.HasOne("NemesisBakuApi.Entities.Product", "Product")
                         .WithMany()
                         .HasForeignKey("ProductId")
-                        .OnDelete(DeleteBehavior.NoAction)
+                        .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired();
 
                     b.HasOne("NemesisBakuApi.Entities.AppUser", "User")
                         .WithMany()
-                        .HasForeignKey("UserId")
-                        .OnDelete(DeleteBehavior.NoAction);
+                        .HasForeignKey("UserId");
 
                     b.Navigation("Product");
 

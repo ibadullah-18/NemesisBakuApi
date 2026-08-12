@@ -10,182 +10,411 @@ namespace NemesisBakuApi.Services.Implementations;
 
 public class CloudinaryFileService : IFileService
 {
-    private const long MaxStandardImageBytes = 25L * 1024 * 1024; // 25 MB
-    private const long MaxHeicImageBytes = 50L * 1024 * 1024;     // 50 MB
+    private const long MaxStandardImageBytes =
+        25L * 1024 * 1024;
 
-    private static readonly HashSet<string> StandardExtensions =
-        new(StringComparer.OrdinalIgnoreCase)
-        {
-            ".jpg", ".jpeg", ".png", ".webp"
-        };
+    private const long MaxHeicImageBytes =
+        50L * 1024 * 1024;
 
-    private static readonly HashSet<string> HeicExtensions =
-        new(StringComparer.OrdinalIgnoreCase)
-        {
-            ".heic", ".heif"
-        };
+    private static readonly HashSet<string>
+        StandardExtensions =
+            new(StringComparer.OrdinalIgnoreCase)
+            {
+                ".jpg",
+                ".jpeg",
+                ".png",
+                ".webp"
+            };
+
+    private static readonly HashSet<string>
+        HeicExtensions =
+            new(StringComparer.OrdinalIgnoreCase)
+            {
+                ".heic",
+                ".heif"
+            };
 
     private readonly Cloudinary _cloudinary;
 
-    public CloudinaryFileService(IOptions<CloudinarySettings> options)
+    private readonly ILogger<CloudinaryFileService>
+        _logger;
+
+    public CloudinaryFileService(
+        IOptions<CloudinarySettings> options,
+        ILogger<CloudinaryFileService> logger)
     {
         var settings = options.Value;
+        _logger = logger;
 
-        if (string.IsNullOrWhiteSpace(settings.CloudName) ||
-            string.IsNullOrWhiteSpace(settings.ApiKey) ||
-            string.IsNullOrWhiteSpace(settings.ApiSecret))
-        {
-            throw new InvalidOperationException("Cloudinary ayarları tam deyil");
-        }
-
-        _cloudinary = new Cloudinary(new Account(
-            settings.CloudName,
-            settings.ApiKey,
-            settings.ApiSecret));
-    }
-
-    public async Task<string> UploadImageAsync(IFormFile file, string folder)
-    {
-        if (file == null || file.Length == 0)
-            throw new InvalidOperationException("Fayl boşdur");
-
-        var extension = Path.GetExtension(file.FileName).ToLowerInvariant();
-        var isHeic = HeicExtensions.Contains(extension);
-
-        if (!StandardExtensions.Contains(extension) && !isHeic)
+        if (string.IsNullOrWhiteSpace(
+                settings.CloudName) ||
+            string.IsNullOrWhiteSpace(
+                settings.ApiKey) ||
+            string.IsNullOrWhiteSpace(
+                settings.ApiSecret))
         {
             throw new InvalidOperationException(
-                "Yalnız JPG, JPEG, PNG, WEBP, HEIC və HEIF formatları qəbul olunur");
+                "Cloudinary ayarları tam deyil");
         }
 
-        var maxBytes = isHeic ? MaxHeicImageBytes : MaxStandardImageBytes;
-        if (file.Length > maxBytes)
+        _cloudinary = new Cloudinary(
+            new Account(
+                settings.CloudName,
+                settings.ApiKey,
+                settings.ApiSecret))
         {
-            var maxMb = maxBytes / 1024 / 1024;
-            throw new InvalidOperationException($"Şəkil maksimum {maxMb} MB ola bilər");
-        }
-
-        if (!await HasValidImageSignatureAsync(file, extension))
-            throw new InvalidOperationException("Faylın şəkil formatı etibarlı deyil");
-
-        var safeFolder = SanitizeFolder(folder);
-        await using var stream = file.OpenReadStream();
-
-        var uploadParams = new ImageUploadParams
-        {
-            File = new FileDescription(file.FileName, stream),
-            Folder = $"nemesisbaku/{safeFolder}",
-            UseFilename = false,
-            UniqueFilename = true,
-            Overwrite = false
+            Api =
+            {
+                Secure = true
+            }
         };
+    }
 
-        // Mac/iPhone HEIC fayllarını brauzerlərin hamısında açılan JPEG kimi saxla.
+    public async Task<string> UploadImageAsync(
+        IFormFile file,
+        string folder)
+    {
+        ValidateFile(file);
+
+        var extension = Path
+            .GetExtension(file.FileName)
+            .ToLowerInvariant();
+
+        var isHeic =
+            HeicExtensions.Contains(extension);
+
+        if (!await HasValidImageSignatureAsync(
+                file,
+                extension))
+        {
+            throw new InvalidOperationException(
+                "Faylın şəkil formatı etibarlı deyil");
+        }
+
+        var safeFolder =
+            SanitizeFolder(folder);
+
+        await using var stream =
+            file.OpenReadStream();
+
+        var uploadParameters =
+            new ImageUploadParams
+            {
+                File = new FileDescription(
+                    file.FileName,
+                    stream),
+
+                Folder =
+                    $"nemesisbaku/{safeFolder}",
+
+                UseFilename = false,
+                UniqueFilename = true,
+                Overwrite = false
+            };
+
         if (isHeic)
-            uploadParams.Format = "jpg";
+        {
+            uploadParameters.Format = "jpg";
+        }
 
-        var result = await _cloudinary.UploadAsync(uploadParams);
+        ImageUploadResult result;
+
+        try
+        {
+            result = await _cloudinary.UploadAsync(
+                uploadParameters);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(
+                ex,
+                "Şəkil Cloudinary-yə yüklənmədi. " +
+                "Folder: {Folder}",
+                safeFolder);
+
+            throw new InvalidOperationException(
+                "Şəkil servisinə qoşulmaq mümkün olmadı",
+                ex);
+        }
 
         if (result.Error != null)
-            throw new InvalidOperationException(result.Error.Message);
+        {
+            _logger.LogWarning(
+                "Cloudinary upload xətası: {Error}",
+                result.Error.Message);
+
+            throw new InvalidOperationException(
+                result.Error.Message);
+        }
 
         if (result.SecureUrl == null)
-            throw new InvalidOperationException("Cloudinary şəkil URL-i qaytarmadı");
+        {
+            throw new InvalidOperationException(
+                "Cloudinary şəkil URL-i qaytarmadı");
+        }
 
         return result.SecureUrl.ToString();
     }
 
-    public async Task DeleteImageAsync(string imageUrl)
+    public async Task DeleteImageAsync(
+        string imageUrl)
     {
-        if (string.IsNullOrWhiteSpace(imageUrl)) return;
-
-        var publicId = ExtractPublicIdFromUrl(imageUrl);
-        if (string.IsNullOrWhiteSpace(publicId)) return;
-
-        var result = await _cloudinary.DestroyAsync(new DeletionParams(publicId)
+        if (string.IsNullOrWhiteSpace(imageUrl))
         {
-            Invalidate = true
-        });
+            return;
+        }
+
+        var publicId = ExtractPublicIdFromUrl(
+            imageUrl);
+
+        if (string.IsNullOrWhiteSpace(publicId))
+        {
+            _logger.LogWarning(
+                "Cloudinary public ID çıxarıla bilmədi.");
+
+            return;
+        }
+
+        DeletionResult result;
+
+        try
+        {
+            result = await _cloudinary.DestroyAsync(
+                new DeletionParams(publicId)
+                {
+                    Invalidate = true,
+                    ResourceType =
+                        ResourceType.Image
+                });
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(
+                ex,
+                "Cloudinary şəkli silinə bilmədi. " +
+                "PublicId: {PublicId}",
+                publicId);
+
+            throw new InvalidOperationException(
+                "Şəkil servisindən faylı silmək " +
+                "mümkün olmadı",
+                ex);
+        }
 
         if (result.Error != null)
-            throw new InvalidOperationException(result.Error.Message);
+        {
+            throw new InvalidOperationException(
+                result.Error.Message);
+        }
+
+        if (string.Equals(
+                result.Result,
+                "not found",
+                StringComparison.OrdinalIgnoreCase))
+        {
+            _logger.LogInformation(
+                "Silinən Cloudinary şəkli artıq " +
+                "mövcud deyil. PublicId: {PublicId}",
+                publicId);
+        }
     }
 
-    private static string SanitizeFolder(string folder)
+    private static void ValidateFile(
+        IFormFile file)
     {
-        var safeFolder = Regex.Replace(folder ?? string.Empty, @"[^a-zA-Z0-9/_-]", "");
-        safeFolder = safeFolder.Trim('/');
-        return string.IsNullOrWhiteSpace(safeFolder) ? "images" : safeFolder;
+        if (file == null || file.Length == 0)
+        {
+            throw new InvalidOperationException(
+                "Fayl boşdur");
+        }
+
+        var extension = Path
+            .GetExtension(file.FileName)
+            .ToLowerInvariant();
+
+        var isStandard =
+            StandardExtensions.Contains(extension);
+
+        var isHeic =
+            HeicExtensions.Contains(extension);
+
+        if (!isStandard && !isHeic)
+        {
+            throw new InvalidOperationException(
+                "Yalnız JPG, JPEG, PNG, WEBP, " +
+                "HEIC və HEIF formatları qəbul olunur");
+        }
+
+        var maxBytes = isHeic
+            ? MaxHeicImageBytes
+            : MaxStandardImageBytes;
+
+        if (file.Length > maxBytes)
+        {
+            var maxMb =
+                maxBytes / 1024 / 1024;
+
+            throw new InvalidOperationException(
+                $"Şəkil maksimum {maxMb} MB ola bilər");
+        }
     }
 
-    private static async Task<bool> HasValidImageSignatureAsync(
-        IFormFile file,
-        string extension)
+    private static string SanitizeFolder(
+        string? folder)
+    {
+        var safeFolder = Regex.Replace(
+            folder ?? string.Empty,
+            @"[^a-zA-Z0-9/_-]",
+            string.Empty);
+
+        safeFolder = safeFolder.Trim('/');
+
+        return string.IsNullOrWhiteSpace(safeFolder)
+            ? "images"
+            : safeFolder;
+    }
+
+    private static async Task<bool>
+        HasValidImageSignatureAsync(
+            IFormFile file,
+            string extension)
     {
         var header = new byte[16];
-        await using var stream = file.OpenReadStream();
-        var read = await stream.ReadAsync(header.AsMemory(0, header.Length));
 
-        if (read < 12) return false;
+        await using var stream =
+            file.OpenReadStream();
+
+        var read = await stream.ReadAsync(
+            header.AsMemory(
+                0,
+                header.Length));
+
+        if (read < 12)
+        {
+            return false;
+        }
 
         if (extension is ".jpg" or ".jpeg")
-            return header[0] == 0xFF && header[1] == 0xD8 && header[2] == 0xFF;
+        {
+            return
+                header[0] == 0xFF &&
+                header[1] == 0xD8 &&
+                header[2] == 0xFF;
+        }
 
         if (extension == ".png")
         {
-            byte[] signature = { 0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A };
-            return header.Take(signature.Length).SequenceEqual(signature);
+            byte[] signature =
+            {
+                0x89,
+                0x50,
+                0x4E,
+                0x47,
+                0x0D,
+                0x0A,
+                0x1A,
+                0x0A
+            };
+
+            return header
+                .Take(signature.Length)
+                .SequenceEqual(signature);
         }
 
         if (extension == ".webp")
         {
-            return Encoding.ASCII.GetString(header, 0, 4) == "RIFF" &&
-                   Encoding.ASCII.GetString(header, 8, 4) == "WEBP";
+            return
+                Encoding.ASCII.GetString(
+                    header,
+                    0,
+                    4) == "RIFF" &&
+
+                Encoding.ASCII.GetString(
+                    header,
+                    8,
+                    4) == "WEBP";
         }
 
         if (extension is ".heic" or ".heif")
         {
-            if (Encoding.ASCII.GetString(header, 4, 4) != "ftyp") return false;
+            if (Encoding.ASCII.GetString(
+                    header,
+                    4,
+                    4) != "ftyp")
+            {
+                return false;
+            }
 
-            var brand = Encoding.ASCII.GetString(header, 8, 4).ToLowerInvariant();
-            return brand.StartsWith("hei") ||
-                   brand.StartsWith("hev") ||
-                   brand is "mif1" or "msf1";
+            var brand = Encoding.ASCII
+                .GetString(header, 8, 4)
+                .ToLowerInvariant();
+
+            return
+                brand.StartsWith("hei") ||
+                brand.StartsWith("hev") ||
+                brand is "mif1" or "msf1";
         }
 
         return false;
     }
 
-    private static string? ExtractPublicIdFromUrl(string imageUrl)
+    private static string? ExtractPublicIdFromUrl(
+        string imageUrl)
     {
-        try
-        {
-            var uri = new Uri(imageUrl);
-            var segments = uri.AbsolutePath
-                .Split('/', StringSplitOptions.RemoveEmptyEntries)
-                .Select(Uri.UnescapeDataString)
-                .ToList();
-
-            var uploadIndex = segments.FindIndex(
-                segment => segment.Equals("upload", StringComparison.OrdinalIgnoreCase));
-
-            if (uploadIndex < 0 || uploadIndex + 1 >= segments.Count) return null;
-
-            var assetSegments = segments.Skip(uploadIndex + 1).ToList();
-            var versionIndex = assetSegments.FindIndex(
-                segment => Regex.IsMatch(segment, @"^v\d+$"));
-
-            if (versionIndex >= 0)
-                assetSegments = assetSegments.Skip(versionIndex + 1).ToList();
-
-            if (assetSegments.Count == 0) return null;
-
-            assetSegments[^1] = Path.GetFileNameWithoutExtension(assetSegments[^1]);
-            return string.Join('/', assetSegments);
-        }
-        catch (UriFormatException)
+        if (!Uri.TryCreate(
+                imageUrl,
+                UriKind.Absolute,
+                out var uri))
         {
             return null;
         }
+
+        var segments = uri.AbsolutePath
+            .Split(
+                '/',
+                StringSplitOptions.RemoveEmptyEntries)
+            .Select(Uri.UnescapeDataString)
+            .ToList();
+
+        var uploadIndex = segments.FindIndex(
+            segment => segment.Equals(
+                "upload",
+                StringComparison.OrdinalIgnoreCase));
+
+        if (uploadIndex < 0 ||
+            uploadIndex + 1 >= segments.Count)
+        {
+            return null;
+        }
+
+        var assetSegments = segments
+            .Skip(uploadIndex + 1)
+            .ToList();
+
+        var versionIndex =
+            assetSegments.FindIndex(
+                segment => Regex.IsMatch(
+                    segment,
+                    @"^v\d+$"));
+
+        if (versionIndex >= 0)
+        {
+            assetSegments = assetSegments
+                .Skip(versionIndex + 1)
+                .ToList();
+        }
+
+        if (assetSegments.Count == 0)
+        {
+            return null;
+        }
+
+        assetSegments[^1] =
+            Path.GetFileNameWithoutExtension(
+                assetSegments[^1]);
+
+        return string.Join(
+            '/',
+            assetSegments);
     }
 }

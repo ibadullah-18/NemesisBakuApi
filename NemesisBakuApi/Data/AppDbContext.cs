@@ -31,6 +31,7 @@ public class AppDbContext
     public DbSet<OrderStatusHistory> OrderStatusHistories { get; set; }
 
     public DbSet<UserOtpCode> UserOtpCodes { get; set; }
+
     public DbSet<WhatsAppMessageLog> WhatsAppMessageLogs { get; set; }
     public DbSet<WhatsAppClickLog> WhatsAppClickLogs { get; set; }
     public DbSet<WhatsAppProductInquiry> WhatsAppProductInquiries { get; set; }
@@ -54,9 +55,14 @@ public class AppDbContext
     public DbSet<HomeSectionProduct> HomeSectionProducts { get; set; }
 
     public DbSet<EmailAnnouncement> EmailAnnouncements { get; set; }
-    public DbSet<BasketLowStockEmailLog> BasketLowStockEmailLogs { get; set; }
+
+    public DbSet<BasketLowStockEmailLog> BasketLowStockEmailLogs
+    { get; set; }
+
     public DbSet<CourierPhone> CourierPhones { get; set; }
-    public DbSet<TelegramOrderNotification> TelegramOrderNotifications { get; set; }
+
+    public DbSet<TelegramOrderNotification> TelegramOrderNotifications
+    { get; set; }
 
     protected override void OnModelCreating(
         ModelBuilder builder)
@@ -64,6 +70,7 @@ public class AppDbContext
         base.OnModelCreating(builder);
 
         ConfigureDecimalProperties(builder);
+        ConfigureConcurrency(builder);
         ConfigureIndexes(builder);
         ConfigureRelationships(builder);
         ConfigureQueryFilters(builder);
@@ -145,6 +152,22 @@ public class AppDbContext
             .HasPrecision(18, 8);
     }
 
+    private static void ConfigureConcurrency(
+        ModelBuilder builder)
+    {
+        builder.Entity<Order>()
+            .Property(x => x.RowVersion)
+            .IsRowVersion();
+
+        builder.Entity<ProductVariant>()
+            .Property(x => x.RowVersion)
+            .IsRowVersion();
+
+        builder.Entity<PromoCode>()
+            .Property(x => x.RowVersion)
+            .IsRowVersion();
+    }
+
     private static void ConfigureIndexes(
         ModelBuilder builder)
     {
@@ -216,6 +239,42 @@ public class AppDbContext
                 x.CreatedAt
             });
 
+        builder.Entity<Order>()
+            .HasIndex(x => x.OrderNumber)
+            .IsUnique();
+
+        builder.Entity<OrderStatusHistory>()
+            .HasIndex(x => new
+            {
+                x.OrderId,
+                x.CreatedAt
+            });
+
+        builder.Entity<PromoCode>()
+            .HasIndex(x => x.Code)
+            .IsUnique();
+
+        builder.Entity<PromoCodeUsage>()
+            .HasIndex(x => new
+            {
+                x.PromoCodeId,
+                x.CreatedAt
+            });
+
+        builder.Entity<PromoCodeUsage>()
+            .HasIndex(x => new
+            {
+                x.UserId,
+                x.CreatedAt
+            });
+
+        builder.Entity<WhatsAppProductInquiry>()
+            .HasIndex(x => new
+            {
+                x.ProductId,
+                x.CreatedAt
+            });
+
         builder.Entity<SiteVisit>()
             .HasIndex(x => x.VisitorId);
 
@@ -233,14 +292,6 @@ public class AppDbContext
                 x.IsUsed,
                 x.ExpiresAt
             });
-
-        builder.Entity<PromoCode>()
-            .HasIndex(x => x.Code)
-            .IsUnique();
-
-        builder.Entity<Order>()
-            .HasIndex(x => x.OrderNumber)
-            .IsUnique();
 
         builder.Entity<RefreshToken>()
             .HasIndex(x => x.Token)
@@ -303,6 +354,48 @@ public class AppDbContext
             .HasOne(x => x.ProductVariant)
             .WithMany()
             .HasForeignKey(x => x.ProductVariantId)
+            .OnDelete(DeleteBehavior.NoAction);
+
+        builder.Entity<OrderStatusHistory>()
+            .HasOne(x => x.Order)
+            .WithMany(x => x.StatusHistories)
+            .HasForeignKey(x => x.OrderId)
+            .OnDelete(DeleteBehavior.NoAction);
+
+        builder.Entity<OrderStatusHistory>()
+            .HasOne(x => x.ChangedByUser)
+            .WithMany()
+            .HasForeignKey(x => x.ChangedByUserId)
+            .OnDelete(DeleteBehavior.NoAction);
+
+        builder.Entity<PromoCodeUsage>()
+            .HasOne(x => x.PromoCode)
+            .WithMany(x => x.Usages)
+            .HasForeignKey(x => x.PromoCodeId)
+            .OnDelete(DeleteBehavior.NoAction);
+
+        builder.Entity<PromoCodeUsage>()
+            .HasOne(x => x.User)
+            .WithMany()
+            .HasForeignKey(x => x.UserId)
+            .OnDelete(DeleteBehavior.NoAction);
+
+        builder.Entity<PromoCodeUsage>()
+            .HasOne(x => x.Order)
+            .WithMany()
+            .HasForeignKey(x => x.OrderId)
+            .OnDelete(DeleteBehavior.NoAction);
+
+        builder.Entity<WhatsAppProductInquiry>()
+            .HasOne(x => x.Product)
+            .WithMany()
+            .HasForeignKey(x => x.ProductId)
+            .OnDelete(DeleteBehavior.NoAction);
+
+        builder.Entity<WhatsAppProductInquiry>()
+            .HasOne(x => x.User)
+            .WithMany()
+            .HasForeignKey(x => x.UserId)
             .OnDelete(DeleteBehavior.NoAction);
 
         builder.Entity<PromoPage>()
@@ -372,8 +465,23 @@ public class AppDbContext
         builder.Entity<OrderItem>()
             .HasQueryFilter(x => !x.IsDeleted);
 
+        builder.Entity<OrderStatusHistory>()
+            .HasQueryFilter(x =>
+                !x.IsDeleted &&
+                !x.Order.IsDeleted);
+
         builder.Entity<PromoCode>()
             .HasQueryFilter(x => !x.IsDeleted);
+
+        builder.Entity<PromoCodeUsage>()
+            .HasQueryFilter(x =>
+                !x.IsDeleted &&
+                !x.PromoCode.IsDeleted);
+
+        builder.Entity<WhatsAppProductInquiry>()
+            .HasQueryFilter(x =>
+                !x.IsDeleted &&
+                !x.Product.IsDeleted);
 
         builder.Entity<StoreInfo>()
             .HasQueryFilter(x => !x.IsDeleted);

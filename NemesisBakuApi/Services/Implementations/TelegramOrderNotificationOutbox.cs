@@ -10,7 +10,8 @@ public class TelegramOrderNotificationOutbox
 {
     private readonly AppDbContext _context;
 
-    public TelegramOrderNotificationOutbox(AppDbContext context)
+    public TelegramOrderNotificationOutbox(
+        AppDbContext context)
     {
         _context = context;
     }
@@ -20,41 +21,70 @@ public class TelegramOrderNotificationOutbox
         CancellationToken cancellationToken = default)
     {
         var recipients = await (
-            from user in _context.Users
-            join userRole in _context.UserRoles on user.Id equals userRole.UserId
-            join role in _context.Roles on userRole.RoleId equals role.Id
+            from user in _context.Users.AsNoTracking()
+
+            join userRole in
+                _context.UserRoles.AsNoTracking()
+                on user.Id equals userRole.UserId
+
+            join role in
+                _context.Roles.AsNoTracking()
+                on userRole.RoleId equals role.Id
+
             where
                 !user.IsDeleted &&
                 user.IsActive &&
                 user.TelegramNotificationsEnabled &&
                 user.TelegramChatId.HasValue &&
-                (role.Name == "Admin" || role.Name == "SuperAdmin")
+                (role.Name == "Admin" ||
+                 role.Name == "SuperAdmin")
+
             select new
             {
-                User = user,
+                UserId = user.Id,
+                user.TelegramChatId,
+                user.FullName,
                 RoleName = role.Name!
             })
             .ToListAsync(cancellationToken);
 
-        foreach (var recipientGroup in recipients.GroupBy(x => x.User.Id))
+        if (recipients.Count == 0)
         {
-            var recipient = recipientGroup.First().User;
+            return;
+        }
 
-            var panelRole = recipientGroup.Any(x => x.RoleName == "SuperAdmin")
-                ? "SuperAdmin"
-                : "Admin";
+        var now = DateTime.UtcNow;
 
-            _context.TelegramOrderNotifications.Add(
-                new TelegramOrderNotification
+        var notifications = recipients
+            .GroupBy(x => x.UserId)
+            .Select(group =>
+            {
+                var recipient = group.First();
+
+                var panelRole = group.Any(
+                    x => x.RoleName == "SuperAdmin")
+                        ? "SuperAdmin"
+                        : "Admin";
+
+                return new TelegramOrderNotification
                 {
                     OrderId = order.Id,
-                    AdminUserId = recipient.Id,
-                    TelegramChatId = recipient.TelegramChatId!.Value,
-                    AdminFullName = recipient.FullName,
+                    AdminUserId = recipient.UserId,
+
+                    TelegramChatId =
+                        recipient.TelegramChatId!.Value,
+
+                    AdminFullName =
+                        recipient.FullName,
+
                     PanelRole = panelRole,
                     AttemptCount = 0,
-                    NextAttemptAt = DateTime.UtcNow
-                });
-        }
+                    NextAttemptAt = now
+                };
+            })
+            .ToList();
+
+        _context.TelegramOrderNotifications
+            .AddRange(notifications);
     }
 }

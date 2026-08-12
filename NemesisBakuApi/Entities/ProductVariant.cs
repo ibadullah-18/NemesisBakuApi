@@ -1,4 +1,6 @@
-﻿namespace NemesisBakuApi.Entities;
+﻿using System.ComponentModel.DataAnnotations;
+
+namespace NemesisBakuApi.Entities;
 
 public class ProductVariant : BaseEntity
 {
@@ -14,4 +16,7 @@ public class ProductVariant : BaseEntity
     public int StockCount { get; set; }
 
     public bool IsActive { get; set; } = true;
+
+    [Timestamp]
+    public byte[] RowVersion { get; set; } = Array.Empty<byte>();
 }

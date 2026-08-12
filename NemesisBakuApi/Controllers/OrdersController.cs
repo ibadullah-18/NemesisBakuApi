@@ -34,29 +34,52 @@ public class OrdersController : ControllerBase
 
     private Guid GetUserId()
     {
-        var userId = User.FindFirstValue(ClaimTypes.NameIdentifier);
+        var userIdValue = User.FindFirstValue(ClaimTypes.NameIdentifier);
 
-        if (string.IsNullOrWhiteSpace(userId))
+        if (!Guid.TryParse(userIdValue, out var userId))
             throw new UnauthorizedAccessException();
 
-        return Guid.Parse(userId);
+        return userId;
     }
 
     [HttpPost]
     public async Task<IActionResult> CreateOrder(CreateOrderDto dto)
     {
+        var cancellationToken = HttpContext.RequestAborted;
         var userId = GetUserId();
 
-        if (dto.Items == null || !dto.Items.Any())
-            return BadRequest(ApiResponse<string>.Fail("Sifariş üçün məhsul seçilməyib"));
+        if (dto.Items == null || dto.Items.Count == 0)
+        {
+            return BadRequest(
+                ApiResponse<string>.Fail("Sifariş üçün məhsul seçilməyib"));
+        }
 
-        var storeInfo = await _context.StoreInfos.FirstOrDefaultAsync();
+        var basketItemIds = dto.Items
+            .Select(x => x.BasketItemId)
+            .Distinct()
+            .ToList();
+
+        if (basketItemIds.Count != dto.Items.Count)
+        {
+            return BadRequest(
+                ApiResponse<string>.Fail("Eyni səbət məhsulu bir neçə dəfə göndərilib"));
+        }
+
+        var storeInfo = await _context.StoreInfos
+            .AsNoTracking()
+            .FirstOrDefaultAsync(cancellationToken);
 
         if (storeInfo == null)
-            return BadRequest(ApiResponse<string>.Fail("Mağaza məlumatları tapılmadı"));
+        {
+            return BadRequest(
+                ApiResponse<string>.Fail("Mağaza məlumatları tapılmadı"));
+        }
 
         if (string.IsNullOrWhiteSpace(storeInfo.WhatsAppNumber))
-            return BadRequest(ApiResponse<string>.Fail("Mağaza WhatsApp nömrəsi təyin edilməyib"));
+        {
+            return BadRequest(
+                ApiResponse<string>.Fail("Mağaza WhatsApp nömrəsi təyin edilməyib"));
+        }
 
         decimal deliveryPrice = 0;
         decimal? deliveryDistanceKm = null;
@@ -66,12 +89,17 @@ public class OrdersController : ControllerBase
             if (dto.SavedAddressId.HasValue)
             {
                 var savedAddress = await _context.UserAddresses
-                    .FirstOrDefaultAsync(x =>
-                        x.Id == dto.SavedAddressId.Value &&
-                        x.UserId == userId);
+                    .AsNoTracking()
+                    .FirstOrDefaultAsync(
+                        x => x.Id == dto.SavedAddressId.Value &&
+                             x.UserId == userId,
+                        cancellationToken);
 
                 if (savedAddress == null)
-                    return BadRequest(ApiResponse<string>.Fail("Seçilmiş ünvan tapılmadı"));
+                {
+                    return BadRequest(
+                        ApiResponse<string>.Fail("Seçilmiş ünvan tapılmadı"));
+                }
 
                 dto.AddressText = savedAddress.AddressText;
                 dto.Latitude = savedAddress.Latitude;
@@ -85,32 +113,53 @@ public class OrdersController : ControllerBase
             }
 
             if (string.IsNullOrWhiteSpace(dto.AddressText))
-                return BadRequest(ApiResponse<string>.Fail("Ünvana çatdırılma üçün ünvan məcburidir"));
+            {
+                return BadRequest(
+                    ApiResponse<string>.Fail(
+                        "Ünvana çatdırılma üçün ünvan məcburidir"));
+            }
 
             if (!dto.Latitude.HasValue || !dto.Longitude.HasValue)
-                return BadRequest(ApiResponse<string>.Fail("Çatdırılma üçün xəritədən konum seçilməlidir"));
+            {
+                return BadRequest(
+                    ApiResponse<string>.Fail(
+                        "Çatdırılma üçün xəritədən konum seçilməlidir"));
+            }
 
             if (!dto.DeliveryDate.HasValue)
-                return BadRequest(ApiResponse<string>.Fail("Çatdırılma tarixi seçilməlidir"));
+            {
+                return BadRequest(
+                    ApiResponse<string>.Fail("Çatdırılma tarixi seçilməlidir"));
+            }
 
             if (string.IsNullOrWhiteSpace(dto.DeliveryTimeRange))
-                return BadRequest(ApiResponse<string>.Fail("Çatdırılma saat aralığı seçilməlidir"));
+            {
+                return BadRequest(
+                    ApiResponse<string>.Fail(
+                        "Çatdırılma saat aralığı seçilməlidir"));
+            }
 
-            if (!storeInfo.Latitude.HasValue || !storeInfo.Longitude.HasValue)
-                return BadRequest(ApiResponse<string>.Fail("Mağaza koordinatları təyin edilməyib"));
+            if (!storeInfo.Latitude.HasValue ||
+                !storeInfo.Longitude.HasValue)
+            {
+                return BadRequest(
+                    ApiResponse<string>.Fail(
+                        "Mağaza koordinatları təyin edilməyib"));
+            }
 
-            deliveryDistanceKm = DeliveryPriceCalculator.CalculateDistanceKm(
-                storeInfo.Latitude.Value,
-                storeInfo.Longitude.Value,
-                dto.Latitude.Value,
-                dto.Longitude.Value);
+            deliveryDistanceKm =
+                DeliveryPriceCalculator.CalculateDistanceKm(
+                    storeInfo.Latitude.Value,
+                    storeInfo.Longitude.Value,
+                    dto.Latitude.Value,
+                    dto.Longitude.Value);
 
-            deliveryPrice = DeliveryPriceCalculator.CalculateDeliveryPrice(
-                deliveryDistanceKm.Value,
-                _deliverySettings);
+            deliveryPrice =
+                DeliveryPriceCalculator.CalculateDeliveryPrice(
+                    deliveryDistanceKm.Value,
+                    _deliverySettings);
         }
-
-        if (dto.DeliveryType == DeliveryType.PickupFromStore)
+        else if (dto.DeliveryType == DeliveryType.PickupFromStore)
         {
             deliveryPrice = 0;
             deliveryDistanceKm = null;
@@ -123,202 +172,276 @@ public class OrdersController : ControllerBase
             dto.Apartment = null;
         }
 
-        await using var transaction = await _context.Database.BeginTransactionAsync();
+        await using var transaction =
+            await _context.Database.BeginTransactionAsync(cancellationToken);
 
-        var basketItemIds = dto.Items.Select(x => x.BasketItemId).ToList();
-
-        var basketItems = await _context.BasketItems
-            .Include(x => x.Product)
-                .ThenInclude(p => p.Images)
-            .Include(x => x.ProductVariant)
-                .ThenInclude(v => v.Size)
-            .Include(x => x.ProductVariant)
-                .ThenInclude(v => v.Color)
-            .Where(x =>
-                x.UserId == userId &&
-                basketItemIds.Contains(x.Id))
-            .ToListAsync();
-
-        if (basketItems.Count != basketItemIds.Count)
-            return BadRequest(ApiResponse<string>.Fail("Səbətdə seçilmiş məhsullardan biri tapılmadı"));
-
-        foreach (var item in basketItems)
+        try
         {
-            if (!item.Product.IsActive)
-                return BadRequest(ApiResponse<string>.Fail($"{item.Product.Name} aktiv deyil"));
+            var basketItems = await _context.BasketItems
+                .Include(x => x.Product)
+                    .ThenInclude(x => x.Images)
+                .Include(x => x.ProductVariant)
+                    .ThenInclude(x => x.Size)
+                .Include(x => x.ProductVariant)
+                    .ThenInclude(x => x.Color)
+                .Where(x =>
+                    x.UserId == userId &&
+                    basketItemIds.Contains(x.Id))
+                .ToListAsync(cancellationToken);
 
-            if (!item.ProductVariant.IsActive)
-                return BadRequest(ApiResponse<string>.Fail($"{item.Product.Name} üçün seçilmiş razmer/rəng aktiv deyil"));
-
-            if (item.ProductVariant.StockCount < item.Quantity)
-                return BadRequest(ApiResponse<string>.Fail($"{item.Product.Name} üçün stok kifayət deyil"));
-        }
-
-        decimal totalProductPrice = 0;
-
-        var order = new Order
-        {
-            UserId = userId,
-            OrderNumber = OrderNumberGenerator.Generate(),
-
-            CustomerFullName = dto.CustomerFullName,
-            CustomerPhoneNumber = dto.CustomerPhoneNumber,
-
-            DeliveryType = dto.DeliveryType,
-            PaymentMethod = dto.PaymentMethod,
-
-            AddressText = dto.AddressText,
-            Latitude = dto.Latitude,
-            Longitude = dto.Longitude,
-
-            BuildingNumber = dto.BuildingNumber,
-            Floor = dto.Floor,
-            Apartment = dto.Apartment,
-
-            DeliveryDate = dto.DeliveryDate,
-            DeliveryTimeRange = dto.DeliveryTimeRange,
-
-            DeliveryPrice = deliveryPrice,
-            DeliveryDistanceKm = deliveryDistanceKm,
-
-            Note = dto.Note,
-
-            Status = OrderStatus.Pending
-        };
-
-        foreach (var basketItem in basketItems)
-        {
-            var unitPrice =
-                basketItem.Product.DiscountPrice.HasValue &&
-                basketItem.Product.DiscountPrice.Value > 0 &&
-                basketItem.Product.DiscountPrice.Value < basketItem.Product.Price
-                    ? basketItem.Product.DiscountPrice.Value
-                    : basketItem.Product.Price;
-
-            var itemTotal = unitPrice * basketItem.Quantity;
-            totalProductPrice += itemTotal;
-
-            var mainImage = basketItem.Product.Images
-                .OrderByDescending(x => x.IsMain)
-                .ThenBy(x => x.Order)
-                .Select(x => x.ImageUrl)
-                .FirstOrDefault();
-
-            var productLink = $"https://nemesisbaku.az/products/{basketItem.ProductId}";
-
-            order.Items.Add(new OrderItem
+            if (basketItems.Count != basketItemIds.Count)
             {
-                ProductId = basketItem.ProductId,
-                ProductVariantId = basketItem.ProductVariantId,
+                return BadRequest(
+                    ApiResponse<string>.Fail(
+                        "Səbətdə seçilmiş məhsullardan biri tapılmadı"));
+            }
 
-                ProductName = basketItem.Product.Name,
-                ProductCode = basketItem.Product.ProductCode,
-
-                SizeValue = basketItem.ProductVariant.Size.Value,
-                ColorName = basketItem.ProductVariant.Color.Name,
-
-                UnitPrice = unitPrice,
-                Quantity = basketItem.Quantity,
-                TotalPrice = itemTotal,
-
-                ProductImageUrl = mainImage,
-                ProductLink = productLink
-            });
-
-            basketItem.ProductVariant.StockCount -= basketItem.Quantity;
-
-            basketItem.IsDeleted = true;
-            basketItem.UpdatedAt = DateTime.UtcNow;
-        }
-
-        decimal promoDiscountAmount = 0;
-
-        if (!string.IsNullOrWhiteSpace(dto.PromoCode))
-        {
-            var now = DateTime.UtcNow;
-            var code = dto.PromoCode.Trim().ToUpper();
-
-            var promo = await _context.PromoCodes
-                .FirstOrDefaultAsync(x =>
-                    x.Code == code &&
-                    x.IsActive &&
-                    x.StartDate <= now &&
-                    (!x.EndDate.HasValue || x.EndDate.Value >= now));
-
-            if (promo == null)
-                return BadRequest(ApiResponse<string>.Fail("Promo kod yanlışdır və ya aktiv deyil"));
-
-            if (promo.UsageLimit.HasValue && promo.UsedCount >= promo.UsageLimit.Value)
-                return BadRequest(ApiResponse<string>.Fail("Promo kod istifadə limitinə çatıb"));
-
-            if (promo.MinOrderAmount.HasValue && totalProductPrice < promo.MinOrderAmount.Value)
-                return BadRequest(ApiResponse<string>.Fail(
-                    $"Bu promo kod üçün minimum sifariş məbləği {promo.MinOrderAmount.Value} AZN olmalıdır"));
-
-            promoDiscountAmount = promo.DiscountType == DiscountType.Percentage
-                ? totalProductPrice * promo.DiscountValue / 100
-                : promo.DiscountValue;
-
-            if (promoDiscountAmount > totalProductPrice)
-                promoDiscountAmount = totalProductPrice;
-
-            promo.UsedCount++;
-
-            _context.PromoCodeUsages.Add(new PromoCodeUsage
+            foreach (var basketItem in basketItems)
             {
-                PromoCodeId = promo.Id,
-                UserId = userId,
-                Order = order,
-                DiscountAmount = promoDiscountAmount
-            });
-        }
+                if (!basketItem.Product.IsActive)
+                {
+                    return BadRequest(
+                        ApiResponse<string>.Fail(
+                            $"{basketItem.Product.Name} aktiv deyil"));
+                }
 
-        order.TotalProductPrice = totalProductPrice;
-        order.PromoDiscountAmount = promoDiscountAmount;
-        order.TotalPrice = totalProductPrice - promoDiscountAmount + order.DeliveryPrice;
+                if (!basketItem.ProductVariant.IsActive)
+                {
+                    return BadRequest(
+                        ApiResponse<string>.Fail(
+                            $"{basketItem.Product.Name} üçün seçilmiş razmer/rəng aktiv deyil"));
+                }
 
-        if (dto.DeliveryType == DeliveryType.HomeDelivery &&
-            dto.SaveAddressToProfile &&
-            !dto.SavedAddressId.HasValue &&
-            !string.IsNullOrWhiteSpace(dto.AddressText) &&
-            dto.Latitude.HasValue &&
-            dto.Longitude.HasValue)
-        {
-            var address = new UserAddress
+                if (basketItem.Quantity <= 0)
+                {
+                    return BadRequest(
+                        ApiResponse<string>.Fail(
+                            $"{basketItem.Product.Name} üçün say düzgün deyil"));
+                }
+
+                if (basketItem.ProductVariant.StockCount <
+                    basketItem.Quantity)
+                {
+                    return BadRequest(
+                        ApiResponse<string>.Fail(
+                            $"{basketItem.Product.Name} üçün stok kifayət deyil"));
+                }
+            }
+
+            decimal totalProductPrice = 0;
+
+            var order = new Order
             {
                 UserId = userId,
-                Title = string.IsNullOrWhiteSpace(dto.AddressTitle) ? "Ünvan" : dto.AddressTitle,
-                AddressText = dto.AddressText,
-                Latitude = dto.Latitude.Value,
-                Longitude = dto.Longitude.Value,
-                BuildingNumber = dto.BuildingNumber,
-                Floor = dto.Floor,
-                Apartment = dto.Apartment,
-                Note = dto.Note,
-                IsDefault = false
+                OrderNumber = OrderNumberGenerator.Generate(),
+
+                CustomerFullName = dto.CustomerFullName.Trim(),
+                CustomerPhoneNumber = dto.CustomerPhoneNumber.Trim(),
+
+                DeliveryType = dto.DeliveryType,
+                PaymentMethod = dto.PaymentMethod,
+
+                AddressText = dto.AddressText?.Trim(),
+                Latitude = dto.Latitude,
+                Longitude = dto.Longitude,
+
+                BuildingNumber = dto.BuildingNumber?.Trim(),
+                Floor = dto.Floor?.Trim(),
+                Apartment = dto.Apartment?.Trim(),
+
+                DeliveryDate = dto.DeliveryDate,
+                DeliveryTimeRange = dto.DeliveryTimeRange?.Trim(),
+
+                DeliveryPrice = deliveryPrice,
+                DeliveryDistanceKm = deliveryDistanceKm,
+
+                Note = dto.Note?.Trim(),
+                Status = OrderStatus.Pending
             };
 
-            _context.UserAddresses.Add(address);
+            foreach (var basketItem in basketItems)
+            {
+                var product = basketItem.Product;
+                var variant = basketItem.ProductVariant;
+
+                var unitPrice =
+                    product.DiscountPrice.HasValue &&
+                    product.DiscountPrice.Value > 0 &&
+                    product.DiscountPrice.Value < product.Price
+                        ? product.DiscountPrice.Value
+                        : product.Price;
+
+                var itemTotal = unitPrice * basketItem.Quantity;
+                totalProductPrice += itemTotal;
+
+                var mainImage = product.Images
+                    .OrderByDescending(x => x.IsMain)
+                    .ThenBy(x => x.Order)
+                    .Select(x => x.ImageUrl)
+                    .FirstOrDefault();
+
+                var productLink =
+                    $"https://nemesisbaku.az/products/{basketItem.ProductId}";
+
+                order.Items.Add(new OrderItem
+                {
+                    ProductId = basketItem.ProductId,
+                    ProductVariantId = basketItem.ProductVariantId,
+
+                    ProductName = product.Name,
+                    ProductCode = product.ProductCode,
+
+                    SizeValue = variant.Size.Value,
+                    ColorName = variant.Color.Name,
+
+                    UnitPrice = unitPrice,
+                    Quantity = basketItem.Quantity,
+                    TotalPrice = itemTotal,
+
+                    ProductImageUrl = mainImage,
+                    ProductLink = productLink
+                });
+
+                variant.StockCount -= basketItem.Quantity;
+
+                basketItem.IsDeleted = true;
+                basketItem.UpdatedAt = DateTime.UtcNow;
+            }
+
+            decimal promoDiscountAmount = 0;
+
+            if (!string.IsNullOrWhiteSpace(dto.PromoCode))
+            {
+                var now = DateTime.UtcNow;
+                var normalizedCode = dto.PromoCode.Trim().ToUpperInvariant();
+
+                var promo = await _context.PromoCodes
+                    .FirstOrDefaultAsync(
+                        x => x.Code == normalizedCode &&
+                             x.IsActive &&
+                             x.StartDate <= now &&
+                             (!x.EndDate.HasValue ||
+                              x.EndDate.Value >= now),
+                        cancellationToken);
+
+                if (promo == null)
+                {
+                    return BadRequest(
+                        ApiResponse<string>.Fail(
+                            "Promo kod yanlışdır və ya aktiv deyil"));
+                }
+
+                if (promo.UsageLimit.HasValue &&
+                    promo.UsedCount >= promo.UsageLimit.Value)
+                {
+                    return BadRequest(
+                        ApiResponse<string>.Fail(
+                            "Promo kod istifadə limitinə çatıb"));
+                }
+
+                if (promo.MinOrderAmount.HasValue &&
+                    totalProductPrice < promo.MinOrderAmount.Value)
+                {
+                    return BadRequest(
+                        ApiResponse<string>.Fail(
+                            $"Bu promo kod üçün minimum sifariş məbləği {promo.MinOrderAmount.Value} AZN olmalıdır"));
+                }
+
+                promoDiscountAmount =
+                    promo.DiscountType == DiscountType.Percentage
+                        ? totalProductPrice * promo.DiscountValue / 100
+                        : promo.DiscountValue;
+
+                if (promoDiscountAmount > totalProductPrice)
+                    promoDiscountAmount = totalProductPrice;
+
+                if (promoDiscountAmount < 0)
+                    promoDiscountAmount = 0;
+
+                promo.UsedCount++;
+
+                _context.PromoCodeUsages.Add(new PromoCodeUsage
+                {
+                    PromoCodeId = promo.Id,
+                    UserId = userId,
+                    Order = order,
+                    DiscountAmount = promoDiscountAmount
+                });
+            }
+
+            order.TotalProductPrice = totalProductPrice;
+            order.PromoDiscountAmount = promoDiscountAmount;
+            order.TotalPrice =
+                totalProductPrice -
+                promoDiscountAmount +
+                order.DeliveryPrice;
+
+            if (dto.DeliveryType == DeliveryType.HomeDelivery &&
+                dto.SaveAddressToProfile &&
+                !dto.SavedAddressId.HasValue &&
+                !string.IsNullOrWhiteSpace(dto.AddressText) &&
+                dto.Latitude.HasValue &&
+                dto.Longitude.HasValue)
+            {
+                var address = new UserAddress
+                {
+                    UserId = userId,
+                    Title = string.IsNullOrWhiteSpace(dto.AddressTitle)
+                        ? "Ünvan"
+                        : dto.AddressTitle.Trim(),
+
+                    AddressText = dto.AddressText.Trim(),
+                    Latitude = dto.Latitude.Value,
+                    Longitude = dto.Longitude.Value,
+
+                    BuildingNumber = dto.BuildingNumber?.Trim(),
+                    Floor = dto.Floor?.Trim(),
+                    Apartment = dto.Apartment?.Trim(),
+                    Note = dto.Note?.Trim(),
+
+                    IsDefault = false
+                };
+
+                _context.UserAddresses.Add(address);
+            }
+
+            _context.Orders.Add(order);
+
+            await _telegramOutbox.EnqueueAsync(
+                order,
+                cancellationToken);
+
+            await _context.SaveChangesAsync(cancellationToken);
+            await transaction.CommitAsync(cancellationToken);
+
+            return Ok(
+                ApiResponse<Guid>.Ok(
+                    order.Id,
+                    "Sifariş uğurla yaradıldı"));
         }
+        catch (DbUpdateConcurrencyException)
+        {
+            await transaction.RollbackAsync(cancellationToken);
 
-        _context.Orders.Add(order);
-
-        await _telegramOutbox.EnqueueAsync(
-            order,
-            HttpContext.RequestAborted);
-
-        await _context.SaveChangesAsync();
-        await transaction.CommitAsync();
-
-        return Ok(ApiResponse<Guid>.Ok(order.Id, "Sifariş uğurla yaradıldı"));
+            return Conflict(
+                ApiResponse<string>.Fail(
+                    "Stok və ya promo kod məlumatı dəyişdi. Səbəti yeniləyib yenidən yoxlayın"));
+        }
+        catch
+        {
+            await transaction.RollbackAsync(cancellationToken);
+            throw;
+        }
     }
 
     [HttpGet("my")]
     public async Task<IActionResult> GetMyOrders()
     {
+        var cancellationToken = HttpContext.RequestAborted;
         var userId = GetUserId();
 
         var orders = await _context.Orders
+            .AsNoTracking()
             .Where(x => x.UserId == userId)
             .OrderByDescending(x => x.CreatedAt)
             .Select(x => new OrderListDto
@@ -331,24 +454,31 @@ public class OrdersController : ControllerBase
                 Status = x.Status,
                 CreatedAt = x.CreatedAt
             })
-            .ToListAsync();
+            .ToListAsync(cancellationToken);
 
         return Ok(ApiResponse<List<OrderListDto>>.Ok(orders));
     }
 
-    [HttpGet("{id}")]
+    [HttpGet("{id:guid}")]
     public async Task<IActionResult> GetOrderDetail(Guid id)
     {
+        var cancellationToken = HttpContext.RequestAborted;
         var userId = GetUserId();
 
         var order = await _context.Orders
+            .AsNoTracking()
             .Include(x => x.Items)
-            .FirstOrDefaultAsync(x => x.Id == id && x.UserId == userId);
+            .FirstOrDefaultAsync(
+                x => x.Id == id && x.UserId == userId,
+                cancellationToken);
 
         if (order == null)
-            return NotFound(ApiResponse<string>.Fail("Sifariş tapılmadı"));
+        {
+            return NotFound(
+                ApiResponse<string>.Fail("Sifariş tapılmadı"));
+        }
 
-        var dto = new OrderDetailDto
+        var result = new OrderDetailDto
         {
             Id = order.Id,
             OrderNumber = order.OrderNumber,
@@ -406,35 +536,56 @@ public class OrdersController : ControllerBase
             }).ToList()
         };
 
-        return Ok(ApiResponse<OrderDetailDto>.Ok(dto));
+        return Ok(ApiResponse<OrderDetailDto>.Ok(result));
     }
 
     [HttpPost("calculate-delivery")]
-    public async Task<IActionResult> CalculateDelivery(CalculateDeliveryDto dto)
+    public async Task<IActionResult> CalculateDelivery(
+        CalculateDeliveryDto dto)
     {
+        var cancellationToken = HttpContext.RequestAborted;
+
         if (dto.Latitude < -90 || dto.Latitude > 90)
-            return BadRequest(ApiResponse<string>.Fail("Latitude düzgün deyil"));
+        {
+            return BadRequest(
+                ApiResponse<string>.Fail("Latitude düzgün deyil"));
+        }
 
         if (dto.Longitude < -180 || dto.Longitude > 180)
-            return BadRequest(ApiResponse<string>.Fail("Longitude düzgün deyil"));
+        {
+            return BadRequest(
+                ApiResponse<string>.Fail("Longitude düzgün deyil"));
+        }
 
-        var storeInfo = await _context.StoreInfos.FirstOrDefaultAsync();
+        var storeInfo = await _context.StoreInfos
+            .AsNoTracking()
+            .FirstOrDefaultAsync(cancellationToken);
 
         if (storeInfo == null)
-            return BadRequest(ApiResponse<string>.Fail("Mağaza məlumatları tapılmadı"));
+        {
+            return BadRequest(
+                ApiResponse<string>.Fail("Mağaza məlumatları tapılmadı"));
+        }
 
-        if (!storeInfo.Latitude.HasValue || !storeInfo.Longitude.HasValue)
-            return BadRequest(ApiResponse<string>.Fail("Mağaza koordinatları təyin edilməyib"));
+        if (!storeInfo.Latitude.HasValue ||
+            !storeInfo.Longitude.HasValue)
+        {
+            return BadRequest(
+                ApiResponse<string>.Fail(
+                    "Mağaza koordinatları təyin edilməyib"));
+        }
 
-        var distanceKm = DeliveryPriceCalculator.CalculateDistanceKm(
-            storeInfo.Latitude.Value,
-            storeInfo.Longitude.Value,
-            dto.Latitude,
-            dto.Longitude);
+        var distanceKm =
+            DeliveryPriceCalculator.CalculateDistanceKm(
+                storeInfo.Latitude.Value,
+                storeInfo.Longitude.Value,
+                dto.Latitude,
+                dto.Longitude);
 
-        var deliveryPrice = DeliveryPriceCalculator.CalculateDeliveryPrice(
-            distanceKm,
-            _deliverySettings);
+        var deliveryPrice =
+            DeliveryPriceCalculator.CalculateDeliveryPrice(
+                distanceKm,
+                _deliverySettings);
 
         var result = new CalculateDeliveryResultDto
         {
@@ -442,6 +593,7 @@ public class OrdersController : ControllerBase
             DeliveryPrice = deliveryPrice
         };
 
-        return Ok(ApiResponse<CalculateDeliveryResultDto>.Ok(result));
+        return Ok(
+            ApiResponse<CalculateDeliveryResultDto>.Ok(result));
     }
 }

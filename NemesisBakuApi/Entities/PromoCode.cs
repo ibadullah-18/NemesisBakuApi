@@ -1,4 +1,5 @@
-﻿using NemesisBakuApi.Enums;
+﻿using System.ComponentModel.DataAnnotations;
+using NemesisBakuApi.Enums;
 
 namespace NemesisBakuApi.Entities;
 
@@ -10,7 +11,7 @@ public class PromoCode : BaseEntity
     public decimal DiscountValue { get; set; }
 
     public int? UsageLimit { get; set; }
-    public int UsedCount { get; set; } = 0;
+    public int UsedCount { get; set; }
 
     public decimal? MinOrderAmount { get; set; }
 
@@ -19,5 +20,9 @@ public class PromoCode : BaseEntity
 
     public bool IsActive { get; set; } = true;
 
-    public ICollection<PromoCodeUsage> Usages { get; set; } = new List<PromoCodeUsage>();
+    [Timestamp]
+    public byte[] RowVersion { get; set; } = Array.Empty<byte>();
+
+    public ICollection<PromoCodeUsage> Usages { get; set; }
+        = new List<PromoCodeUsage>();
 }

@@ -19,28 +19,29 @@ public class AdminOrdersController : ControllerBase
     private readonly AppDbContext _context;
     private readonly IAuditLogService _auditLogService;
     private readonly IEmailService _emailService;
+    private readonly ILogger<AdminOrdersController> _logger;
 
     public AdminOrdersController(
         AppDbContext context,
         IAuditLogService auditLogService,
-        IEmailService emailService)
+        IEmailService emailService,
+        ILogger<AdminOrdersController> logger)
     {
         _context = context;
         _auditLogService = auditLogService;
         _emailService = emailService;
+        _logger = logger;
     }
 
     private Guid GetUserId()
     {
-        var userId = User.FindFirstValue(
+        var userIdValue = User.FindFirstValue(
             ClaimTypes.NameIdentifier);
 
-        if (string.IsNullOrWhiteSpace(userId))
-        {
+        if (!Guid.TryParse(userIdValue, out var userId))
             throw new UnauthorizedAccessException();
-        }
 
-        return Guid.Parse(userId);
+        return userId;
     }
 
     [HttpGet]
@@ -51,20 +52,8 @@ public class AdminOrdersController : ControllerBase
         [FromQuery] int pageSize = 20,
         CancellationToken cancellationToken = default)
     {
-        if (page <= 0)
-        {
-            page = 1;
-        }
-
-        if (pageSize <= 0)
-        {
-            pageSize = 20;
-        }
-
-        if (pageSize > 100)
-        {
-            pageSize = 100;
-        }
+        page = Math.Max(page, 1);
+        pageSize = Math.Clamp(pageSize, 1, 100);
 
         var query = _context.Orders
             .AsNoTracking()
@@ -78,15 +67,12 @@ public class AdminOrdersController : ControllerBase
 
         if (!string.IsNullOrWhiteSpace(search))
         {
-            var searchValue = search.Trim().ToLower();
+            var searchValue = search.Trim();
 
             query = query.Where(x =>
-                x.OrderNumber.ToLower()
-                    .Contains(searchValue) ||
-                x.CustomerFullName.ToLower()
-                    .Contains(searchValue) ||
-                x.CustomerPhoneNumber.ToLower()
-                    .Contains(searchValue));
+                x.OrderNumber.Contains(searchValue) ||
+                x.CustomerFullName.Contains(searchValue) ||
+                x.CustomerPhoneNumber.Contains(searchValue));
         }
 
         var totalCount = await query.CountAsync(
@@ -119,8 +105,10 @@ public class AdminOrdersController : ControllerBase
             Page = page,
             PageSize = pageSize,
             TotalCount = totalCount,
-            TotalPages = (int)Math.Ceiling(
-                totalCount / (double)pageSize)
+            TotalPages = totalCount == 0
+                ? 0
+                : (int)Math.Ceiling(
+                    totalCount / (double)pageSize)
         };
 
         return Ok(
@@ -128,7 +116,7 @@ public class AdminOrdersController : ControllerBase
                 .Ok(result));
     }
 
-    [HttpGet("{id}")]
+    [HttpGet("{id:guid}")]
     public async Task<IActionResult> GetOrderDetail(
         Guid id,
         CancellationToken cancellationToken)
@@ -151,7 +139,7 @@ public class AdminOrdersController : ControllerBase
                     "Sifariş tapılmadı"));
         }
 
-        var dto = new OrderDetailDto
+        var result = new OrderDetailDto
         {
             Id = order.Id,
             OrderNumber = order.OrderNumber,
@@ -178,18 +166,21 @@ public class AdminOrdersController : ControllerBase
             DeliveryPrice = order.DeliveryPrice,
             DeliveryDistanceKm =
                 order.DeliveryDistanceKm,
+
             Note = order.Note,
 
             TotalProductPrice =
                 order.TotalProductPrice,
+
             PromoDiscountAmount =
                 order.PromoDiscountAmount,
-            TotalPrice = order.TotalPrice,
 
+            TotalPrice = order.TotalPrice,
             Status = order.Status,
 
             IsWhatsappMessageSent =
                 order.IsWhatsappMessageSent,
+
             WhatsappMessageSentAt =
                 order.WhatsappMessageSentAt,
 
@@ -201,25 +192,30 @@ public class AdminOrdersController : ControllerBase
                     ProductId = x.ProductId,
                     ProductVariantId =
                         x.ProductVariantId,
+
                     ProductName = x.ProductName,
                     ProductCode = x.ProductCode,
+
                     SizeValue = x.SizeValue,
                     ColorName = x.ColorName,
+
                     UnitPrice = x.UnitPrice,
                     Quantity = x.Quantity,
                     TotalPrice = x.TotalPrice,
+
                     ProductImageUrl =
                         x.ProductImageUrl,
+
                     ProductLink = x.ProductLink
                 })
                 .ToList()
         };
 
         return Ok(
-            ApiResponse<OrderDetailDto>.Ok(dto));
+            ApiResponse<OrderDetailDto>.Ok(result));
     }
 
-    [HttpPut("{id}/status")]
+    [HttpPut("{id:guid}/status")]
     public async Task<IActionResult> UpdateStatus(
         Guid id,
         UpdateOrderStatusDto dto,
@@ -227,103 +223,159 @@ public class AdminOrdersController : ControllerBase
     {
         var adminId = GetUserId();
 
-        var order = await _context.Orders
-            .AsSplitQuery()
-            .Include(x => x.User)
-            .Include(x => x.Items)
-            .FirstOrDefaultAsync(
-                x => x.Id == id,
-                cancellationToken);
-
-        if (order == null)
-        {
-            return NotFound(
-                ApiResponse<string>.Fail(
-                    "Sifariş tapılmadı"));
-        }
-
-        if (order.Status == dto.NewStatus)
+        if (!Enum.IsDefined(dto.NewStatus))
         {
             return BadRequest(
                 ApiResponse<string>.Fail(
-                    "Sifariş artıq bu statusdadır"));
+                    "Sifariş statusu düzgün deyil"));
         }
 
-        var oldStatus = order.Status;
-        var updatedAt = DateTime.UtcNow;
+        await using var transaction =
+            await _context.Database.BeginTransactionAsync(
+                cancellationToken);
 
-        order.Status = dto.NewStatus;
-        order.UpdatedAt = updatedAt;
+        Order? order = null;
+        OrderStatus oldStatus = default;
+        var stockReturnedNow = false;
 
-        var shouldReturnStock =
-            (dto.NewStatus == OrderStatus.Cancelled ||
-             dto.NewStatus == OrderStatus.Rejected) &&
-            !order.StockReturned;
-
-        if (shouldReturnStock)
+        try
         {
-            await ReturnOrderStockAsync(
-                order,
-                updatedAt,
+            order = await _context.Orders
+                .AsSplitQuery()
+                .Include(x => x.User)
+                .Include(x => x.Items)
+                .FirstOrDefaultAsync(
+                    x => x.Id == id,
+                    cancellationToken);
+
+            if (order == null)
+            {
+                return NotFound(
+                    ApiResponse<string>.Fail(
+                        "Sifariş tapılmadı"));
+            }
+
+            if (order.Status == dto.NewStatus)
+            {
+                return BadRequest(
+                    ApiResponse<string>.Fail(
+                        "Sifariş artıq bu statusdadır"));
+            }
+
+            if (!OrderStatusRules.CanTransition(
+                    order.Status,
+                    dto.NewStatus))
+            {
+                return BadRequest(
+                    ApiResponse<string>.Fail(
+                        OrderStatusRules
+                            .GetTransitionErrorMessage(
+                                order.Status,
+                                dto.NewStatus)));
+            }
+
+            oldStatus = order.Status;
+            var updatedAt = DateTime.UtcNow;
+
+            order.Status = dto.NewStatus;
+            order.UpdatedAt = updatedAt;
+
+            var shouldReturnStock =
+                OrderStatusRules.RequiresStockReturn(
+                    dto.NewStatus) &&
+                !order.StockReturned;
+
+            if (shouldReturnStock)
+            {
+                await ReturnOrderStockAsync(
+                    order,
+                    updatedAt,
+                    cancellationToken);
+
+                stockReturnedNow = true;
+            }
+
+            _context.OrderStatusHistories.Add(
+                new OrderStatusHistory
+                {
+                    OrderId = order.Id,
+                    OldStatus = oldStatus,
+                    NewStatus = dto.NewStatus,
+                    ChangedByUserId = adminId,
+                    Note = string.IsNullOrWhiteSpace(dto.Note)
+                        ? null
+                        : dto.Note.Trim()
+                });
+
+            await _context.SaveChangesAsync(
+                cancellationToken);
+
+            await transaction.CommitAsync(
                 cancellationToken);
         }
+        catch (DbUpdateConcurrencyException exception)
+        {
+            await transaction.RollbackAsync(
+                CancellationToken.None);
 
-        _context.OrderStatusHistories.Add(
-            new OrderStatusHistory
-            {
-                OrderId = order.Id,
-                OldStatus = oldStatus,
-                NewStatus = dto.NewStatus,
-                ChangedByUserId = adminId,
-                Note = dto.Note
-            });
+            _logger.LogWarning(
+                exception,
+                "Sifariş statusunda concurrency problemi. OrderId: {OrderId}",
+                id);
 
-        await _context.SaveChangesAsync(
-            cancellationToken);
+            return Conflict(
+                ApiResponse<string>.Fail(
+                    "Sifariş və ya stok məlumatı başqa əməliyyat tərəfindən dəyişdirildi. Səhifəni yeniləyib təkrar yoxlayın"));
+        }
+        catch
+        {
+            await transaction.RollbackAsync(
+                CancellationToken.None);
 
-        await WriteAuditLogAsync(
+            throw;
+        }
+
+        await WriteAuditLogSafelyAsync(
+            adminId,
             "UpdateStatus",
             "Order",
             order.Id.ToString(),
             $"Sifariş statusu dəyişdirildi: " +
-            $"{oldStatus} → {dto.NewStatus}. " +
+            $"{oldStatus} → {order.Status}. " +
             $"OrderNumber: {order.OrderNumber}");
 
-        if (shouldReturnStock)
+        if (stockReturnedNow)
         {
-            await WriteAuditLogAsync(
+            await WriteAuditLogSafelyAsync(
+                adminId,
                 "StockReturned",
                 "Order",
                 order.Id.ToString(),
-                "Sifariş ləğv/rədd edildi və " +
-                "məhsullar stoka geri qaytarıldı. " +
+                "Sifariş ləğv/rədd edildi və məhsullar " +
+                "stoka geri qaytarıldı. " +
                 $"OrderNumber: {order.OrderNumber}");
         }
 
-        if (order.User != null &&
-            !string.IsNullOrWhiteSpace(
-                order.User.Email))
-        {
-            await _emailService.SendOrderStatusAsync(
-                order.User.Email,
-                order.CustomerFullName,
-                order.OrderNumber,
-                order.Status,
-                order.TotalPrice);
-        }
+        await SendStatusEmailSafelyAsync(order);
 
         return Ok(
             ApiResponse<string>.Ok(
                 "Sifariş statusu yeniləndi"));
     }
 
-    [HttpGet("{id}/status-whatsapp-link")]
-    public async Task<IActionResult>
-        GetStatusWhatsAppLink(
-            Guid id,
-            [FromQuery] OrderStatus status,
-            CancellationToken cancellationToken)
+    [HttpGet("{id:guid}/status-whatsapp-link")]
+    public async Task<IActionResult> GetStatusWhatsAppLink(
+        Guid id,
+        [FromQuery] OrderStatus status,
+        CancellationToken cancellationToken)
     {
+        if (!Enum.IsDefined(status))
+        {
+            return BadRequest(
+                ApiResponse<string>.Fail(
+                    "Sifariş statusu düzgün deyil"));
+        }
+
         var order = await _context.Orders
             .AsNoTracking()
             .Include(x => x.Items)
@@ -377,13 +429,20 @@ public class AdminOrdersController : ControllerBase
                 .Ok(result));
     }
 
-    [HttpGet("{id}/courier-whatsapp-link")]
-    public async Task<IActionResult>
-        GetCourierWhatsAppLink(
-            Guid id,
-            [FromQuery] string courierPhoneNumber,
-            CancellationToken cancellationToken)
+    [HttpGet("{id:guid}/courier-whatsapp-link")]
+    public async Task<IActionResult> GetCourierWhatsAppLink(
+        Guid id,
+        [FromQuery] string courierPhoneNumber,
+        CancellationToken cancellationToken)
     {
+        if (string.IsNullOrWhiteSpace(
+                courierPhoneNumber))
+        {
+            return BadRequest(
+                ApiResponse<string>.Fail(
+                    "Kuryer nömrəsi daxil edilməlidir"));
+        }
+
         var order = await _context.Orders
             .AsNoTracking()
             .Include(x => x.Items)
@@ -396,14 +455,6 @@ public class AdminOrdersController : ControllerBase
             return NotFound(
                 ApiResponse<string>.Fail(
                     "Sifariş tapılmadı"));
-        }
-
-        if (string.IsNullOrWhiteSpace(
-                courierPhoneNumber))
-        {
-            return BadRequest(
-                ApiResponse<string>.Fail(
-                    "Kuryer nömrəsi daxil edilməlidir"));
         }
 
         var message = BuildCourierMessage(order);
@@ -432,10 +483,13 @@ public class AdminOrdersController : ControllerBase
         DateTime updatedAt,
         CancellationToken cancellationToken)
     {
-        var variantIds = order.Items
-            .Select(x => x.ProductVariantId)
-            .Distinct()
-            .ToList();
+        var quantitiesByVariant = order.Items
+            .GroupBy(x => x.ProductVariantId)
+            .ToDictionary(
+                x => x.Key,
+                x => x.Sum(item => item.Quantity));
+
+        var variantIds = quantitiesByVariant.Keys.ToList();
 
         var variants = await _context.ProductVariants
             .Where(x => variantIds.Contains(x.Id))
@@ -443,16 +497,17 @@ public class AdminOrdersController : ControllerBase
                 x => x.Id,
                 cancellationToken);
 
-        foreach (var item in order.Items)
+        if (variants.Count != variantIds.Count)
         {
-            if (!variants.TryGetValue(
-                    item.ProductVariantId,
-                    out var variant))
-            {
-                continue;
-            }
+            throw new InvalidOperationException(
+                "Sifarişdəki məhsul variantlarından biri tapılmadı");
+        }
 
-            variant.StockCount += item.Quantity;
+        foreach (var variantData in quantitiesByVariant)
+        {
+            var variant = variants[variantData.Key];
+
+            variant.StockCount += variantData.Value;
             variant.UpdatedAt = updatedAt;
         }
 
@@ -460,22 +515,61 @@ public class AdminOrdersController : ControllerBase
         order.StockReturnedAt = updatedAt;
     }
 
-    private async Task WriteAuditLogAsync(
+    private async Task WriteAuditLogSafelyAsync(
+        Guid adminId,
         string action,
         string entityName,
         string? entityId,
         string? description)
     {
-        await _auditLogService.CreateAsync(
-            GetUserId(),
-            action,
-            entityName,
-            entityId,
-            description,
-            HttpContext.Connection
-                .RemoteIpAddress?
-                .ToString(),
-            Request.Headers.UserAgent.ToString());
+        try
+        {
+            await _auditLogService.CreateAsync(
+                adminId,
+                action,
+                entityName,
+                entityId,
+                description,
+                HttpContext.Connection
+                    .RemoteIpAddress?
+                    .ToString(),
+                Request.Headers.UserAgent.ToString());
+        }
+        catch (Exception exception)
+        {
+            _logger.LogError(
+                exception,
+                "Audit log yaradıla bilmədi. Action: {Action}, EntityId: {EntityId}",
+                action,
+                entityId);
+        }
+    }
+
+    private async Task SendStatusEmailSafelyAsync(
+        Order order)
+    {
+        if (order.User == null ||
+            string.IsNullOrWhiteSpace(order.User.Email))
+        {
+            return;
+        }
+
+        try
+        {
+            await _emailService.SendOrderStatusAsync(
+                order.User.Email,
+                order.CustomerFullName,
+                order.OrderNumber,
+                order.Status,
+                order.TotalPrice);
+        }
+        catch (Exception exception)
+        {
+            _logger.LogError(
+                exception,
+                "Sifariş status emaili göndərilə bilmədi. OrderId: {OrderId}",
+                order.Id);
+        }
     }
 
     private static string BuildOrderStatusMessage(

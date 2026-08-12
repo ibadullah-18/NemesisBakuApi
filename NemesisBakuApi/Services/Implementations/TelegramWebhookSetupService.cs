@@ -2,16 +2,24 @@
 
 namespace NemesisBakuApi.Services.Implementations;
 
-public class TelegramWebhookSetupService : BackgroundService
+public class TelegramWebhookSetupService
+    : BackgroundService
 {
-    private readonly ITelegramBotService _telegramBotService;
-    private readonly ILogger<TelegramWebhookSetupService> _logger;
+    private const int MaxAttempts = 3;
+
+    private readonly ITelegramBotService
+        _telegramBotService;
+
+    private readonly ILogger<
+        TelegramWebhookSetupService> _logger;
 
     public TelegramWebhookSetupService(
         ITelegramBotService telegramBotService,
         ILogger<TelegramWebhookSetupService> logger)
     {
-        _telegramBotService = telegramBotService;
+        _telegramBotService =
+            telegramBotService;
+
         _logger = logger;
     }
 
@@ -21,26 +29,85 @@ public class TelegramWebhookSetupService : BackgroundService
         if (!_telegramBotService.IsConfigured)
         {
             _logger.LogWarning(
-                "Telegram inteqrasiyası aktiv deyil: BotToken və ya WebhookSecret yoxdur.");
+                "Telegram inteqrasiyası aktiv deyil: " +
+                "Telegram ayarları tam deyil.");
+
             return;
         }
 
+        await DelaySafelyAsync(
+            TimeSpan.FromSeconds(3),
+            stoppingToken);
+
+        for (var attempt = 1;
+             attempt <= MaxAttempts;
+             attempt++)
+        {
+            try
+            {
+                await _telegramBotService
+                    .ConfigureWebhookAsync(
+                        stoppingToken);
+
+                _logger.LogInformation(
+                    "Telegram webhook uğurla " +
+                    "konfiqurasiya edildi.");
+
+                return;
+            }
+            catch (OperationCanceledException)
+                when (stoppingToken
+                    .IsCancellationRequested)
+            {
+                return;
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(
+                    ex,
+                    "Telegram webhook konfiqurasiyası " +
+                    "uğursuz oldu. Cəhd: " +
+                    "{Attempt}/{MaxAttempts}",
+                    attempt,
+                    MaxAttempts);
+
+                if (attempt == MaxAttempts)
+                {
+                    break;
+                }
+
+                var retryDelay =
+                    TimeSpan.FromSeconds(
+                        attempt * 5);
+
+                await DelaySafelyAsync(
+                    retryDelay,
+                    stoppingToken);
+            }
+        }
+
+        _logger.LogError(
+            "Telegram webhook {MaxAttempts} cəhddən " +
+            "sonra konfiqurasiya edilə bilmədi. " +
+            "API işləməyə davam edir.",
+            MaxAttempts);
+    }
+
+    private static async Task DelaySafelyAsync(
+        TimeSpan delay,
+        CancellationToken cancellationToken)
+    {
         try
         {
-            await Task.Delay(TimeSpan.FromSeconds(3), stoppingToken);
-            await _telegramBotService.ConfigureWebhookAsync(stoppingToken);
-
-            _logger.LogInformation(
-                "Telegram webhook uğurla konfiqurasiya edildi.");
+            await Task.Delay(
+                delay,
+                cancellationToken);
         }
-        catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
+        catch (OperationCanceledException)
+            when (cancellationToken
+                .IsCancellationRequested)
         {
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(
-                ex,
-                "Telegram webhook konfiqurasiyası uğursuz oldu.");
+            // Tətbiq bağlanır.
         }
     }
 }

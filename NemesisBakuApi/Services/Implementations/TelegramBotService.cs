@@ -6,11 +6,17 @@ using NemesisBakuApi.Settings;
 
 namespace NemesisBakuApi.Services.Implementations;
 
-public class TelegramBotService : ITelegramBotService
+public class TelegramBotService
+    : ITelegramBotService
 {
+    private static readonly TimeSpan RequestTimeout =
+        TimeSpan.FromSeconds(15);
+
     private readonly HttpClient _httpClient;
     private readonly TelegramSettings _settings;
-    private readonly ILogger<TelegramBotService> _logger;
+
+    private readonly ILogger<TelegramBotService>
+        _logger;
 
     public TelegramBotService(
         HttpClient httpClient,
@@ -24,23 +30,36 @@ public class TelegramBotService : ITelegramBotService
 
     public bool IsConfigured =>
         _settings.Enabled &&
-        !string.IsNullOrWhiteSpace(_settings.BotToken) &&
-        !string.IsNullOrWhiteSpace(_settings.WebhookSecret);
+        !string.IsNullOrWhiteSpace(
+            _settings.BotToken) &&
+        !string.IsNullOrWhiteSpace(
+            _settings.WebhookSecret) &&
+        !string.IsNullOrWhiteSpace(
+            _settings.PublicBaseUrl) &&
+        !string.IsNullOrWhiteSpace(
+            _settings.SiteBaseUrl);
 
-    public Task ConfigureWebhookAsync(CancellationToken cancellationToken = default)
+    public Task ConfigureWebhookAsync(
+        CancellationToken cancellationToken = default)
     {
         EnsureConfigured();
 
         var webhookUrl =
-            $"{_settings.PublicBaseUrl.TrimEnd('/')}/api/telegram/webhook";
+            $"{_settings.PublicBaseUrl.TrimEnd('/')}" +
+            "/api/telegram/webhook";
 
         return CallApiAsync(
             "setWebhook",
             new
             {
                 url = webhookUrl,
-                secret_token = _settings.WebhookSecret,
-                allowed_updates = new[] { "message" },
+
+                secret_token =
+                    _settings.WebhookSecret,
+
+                allowed_updates =
+                    new[] { "message" },
+
                 drop_pending_updates = false
             },
             cancellationToken);
@@ -55,9 +74,13 @@ public class TelegramBotService : ITelegramBotService
             new
             {
                 chat_id = chatId,
+
                 text =
-                    "Salam. Telegram bildirişlərini admin hesabınıza bağlamaq üçün " +
-                    "aşağıdakı düymə ilə öz telefon nömrənizi paylaşın.",
+                    "Salam. Telegram bildirişlərini " +
+                    "admin hesabınıza bağlamaq üçün " +
+                    "aşağıdakı düymə ilə öz telefon " +
+                    "nömrənizi paylaşın.",
+
                 reply_markup = new
                 {
                     keyboard = new[]
@@ -66,11 +89,14 @@ public class TelegramBotService : ITelegramBotService
                         {
                             new
                             {
-                                text = "Telefon nömrəmi paylaş",
+                                text =
+                                    "Telefon nömrəmi paylaş",
+
                                 request_contact = true
                             }
                         }
                     },
+
                     resize_keyboard = true,
                     one_time_keyboard = true
                 }
@@ -102,7 +128,11 @@ public class TelegramBotService : ITelegramBotService
             {
                 chat_id = chatId,
                 text,
-                reply_markup = new { remove_keyboard = true }
+
+                reply_markup = new
+                {
+                    remove_keyboard = true
+                }
             },
             cancellationToken);
     }
@@ -124,7 +154,8 @@ public class TelegramBotService : ITelegramBotService
                 : "Admin";
 
         var orderUrl =
-            $"{_settings.SiteBaseUrl.TrimEnd('/')}/{panelSegment}/orders/{orderId}";
+            $"{_settings.SiteBaseUrl.TrimEnd('/')}/" +
+            $"{panelSegment}/orders/{orderId}";
 
         var message =
             $"Salam, <b>{EscapeHtml(adminFullName)}</b>\n\n" +
@@ -141,6 +172,7 @@ public class TelegramBotService : ITelegramBotService
                 text = message,
                 parse_mode = "HTML",
                 disable_web_page_preview = true,
+
                 reply_markup = new
                 {
                     inline_keyboard = new[]
@@ -166,30 +198,56 @@ public class TelegramBotService : ITelegramBotService
     {
         EnsureConfigured();
 
+        using var timeoutSource =
+            CancellationTokenSource
+                .CreateLinkedTokenSource(
+                    cancellationToken);
+
+        timeoutSource.CancelAfter(RequestTimeout);
+
         var requestUrl =
-            $"https://api.telegram.org/bot{_settings.BotToken}/{method}";
+            "https://api.telegram.org/bot" +
+            $"{_settings.BotToken}/{method}";
 
-        using var response = await _httpClient.PostAsJsonAsync(
-            requestUrl,
-            payload,
-            cancellationToken);
+        try
+        {
+            using var response =
+                await _httpClient.PostAsJsonAsync(
+                    requestUrl,
+                    payload,
+                    timeoutSource.Token);
 
-        if (response.IsSuccessStatusCode)
-            return;
+            if (response.IsSuccessStatusCode)
+            {
+                return;
+            }
 
-        var responseBody = await response.Content.ReadAsStringAsync(
-            cancellationToken);
+            var responseBody =
+                await response.Content
+                    .ReadAsStringAsync(
+                        timeoutSource.Token);
 
-        _logger.LogWarning(
-            "Telegram API {Method} çağırışı uğursuz oldu. Status: {StatusCode}. Cavab: {Response}",
-            method,
-            (int)response.StatusCode,
-            Limit(responseBody, 500));
+            _logger.LogWarning(
+                "Telegram API {Method} çağırışı " +
+                "uğursuz oldu. Status: {StatusCode}. " +
+                "Cavab: {Response}",
+                method,
+                (int)response.StatusCode,
+                Limit(responseBody, 500));
 
-        throw new HttpRequestException(
-            $"Telegram API xətası: {(int)response.StatusCode}",
-            null,
-            response.StatusCode);
+            throw new HttpRequestException(
+                $"Telegram API xətası: " +
+                $"{(int)response.StatusCode}",
+                null,
+                response.StatusCode);
+        }
+        catch (OperationCanceledException)
+            when (!cancellationToken
+                .IsCancellationRequested)
+        {
+            throw new TimeoutException(
+                "Telegram API sorğusunun vaxtı bitdi.");
+        }
     }
 
     private void EnsureConfigured()
@@ -197,19 +255,28 @@ public class TelegramBotService : ITelegramBotService
         if (!IsConfigured)
         {
             throw new InvalidOperationException(
-                "Telegram BotToken və WebhookSecret konfiqurasiya edilməyib.");
+                "Telegram ayarları tam " +
+                "konfiqurasiya edilməyib.");
         }
     }
 
-    private static string EscapeHtml(string value)
+    private static string EscapeHtml(
+        string value)
     {
-        return WebUtility.HtmlEncode(value ?? string.Empty);
+        return WebUtility.HtmlEncode(
+            value ?? string.Empty);
     }
 
-    private static string Limit(string value, int maxLength)
+    private static string Limit(
+        string value,
+        int maxLength)
     {
-        return value.Length <= maxLength
-            ? value
-            : value[..maxLength];
+        if (string.IsNullOrEmpty(value) ||
+            value.Length <= maxLength)
+        {
+            return value;
+        }
+
+        return value[..maxLength];
     }
 }

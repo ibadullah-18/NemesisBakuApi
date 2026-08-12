@@ -2,5 +2,6 @@
 
 public class SendChangeEmailOtpDto
 {
-    public string NewEmail { get; set; } = null!;
+    public string NewEmail { get; set; } =
+        null!;
 }

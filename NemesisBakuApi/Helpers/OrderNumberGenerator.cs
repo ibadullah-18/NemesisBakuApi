@@ -1,9 +1,22 @@
-﻿namespace NemesisBakuApi.Helpers;
+﻿using System.Security.Cryptography;
+
+namespace NemesisBakuApi.Helpers;
 
 public static class OrderNumberGenerator
 {
+    private const int MinimumRandomNumber = 1000;
+    private const int MaximumRandomNumberExclusive = 10000;
+
     public static string Generate()
     {
-        return $"NB-{DateTime.UtcNow:yyyyMMddHHmmss}-{Random.Shared.Next(1000, 9999)}";
+        var timestamp = DateTime.UtcNow
+            .ToString("yyyyMMddHHmmss");
+
+        var randomNumber =
+            RandomNumberGenerator.GetInt32(
+                MinimumRandomNumber,
+                MaximumRandomNumberExclusive);
+
+        return $"NB-{timestamp}-{randomNumber}";
     }
 }

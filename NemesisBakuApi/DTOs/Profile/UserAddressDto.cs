@@ -4,8 +4,11 @@ public class UserAddressDto
 {
     public Guid Id { get; set; }
 
-    public string Title { get; set; } = null!;
-    public string AddressText { get; set; } = null!;
+    public string Title { get; set; } =
+        null!;
+
+    public string AddressText { get; set; } =
+        null!;
 
     public decimal Latitude { get; set; }
     public decimal Longitude { get; set; }

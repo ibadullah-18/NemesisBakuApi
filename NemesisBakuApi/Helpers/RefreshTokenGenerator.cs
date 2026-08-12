@@ -4,13 +4,17 @@ namespace NemesisBakuApi.Helpers;
 
 public static class RefreshTokenGenerator
 {
+    private const int TokenSizeInBytes = 64;
+
     public static string Generate()
     {
-        var randomBytes = new byte[64];
+        Span<byte> randomBytes =
+            stackalloc byte[TokenSizeInBytes];
 
-        using var rng = RandomNumberGenerator.Create();
-        rng.GetBytes(randomBytes);
+        RandomNumberGenerator.Fill(
+            randomBytes);
 
-        return Convert.ToBase64String(randomBytes);
+        return Convert.ToBase64String(
+            randomBytes);
     }
 }

@@ -1,4 +1,5 @@
-﻿using NemesisBakuApi.Enums;
+﻿using System.ComponentModel.DataAnnotations;
+using NemesisBakuApi.Enums;
 
 namespace NemesisBakuApi.Entities;
 
@@ -13,5 +14,6 @@ public class OrderStatusHistory : BaseEntity
     public Guid? ChangedByUserId { get; set; }
     public AppUser? ChangedByUser { get; set; }
 
+    [MaxLength(500)]
     public string? Note { get; set; }
 }

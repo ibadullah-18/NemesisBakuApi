@@ -32,4 +32,12 @@
     <Folder Include="Repositories\" />
   </ItemGroup>
 
+  <ItemGroup>
+    <EditorConfigFiles Remove="C:\Users\lenovo\source\repos\ibadullah-18\NemesisBakuApi\NemesisBakuApi\.editorconfig" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <None Include="C:\Users\lenovo\source\repos\ibadullah-18\NemesisBakuApi\NemesisBakuApi\.editorconfig" />
+  </ItemGroup>
+
 </Project>

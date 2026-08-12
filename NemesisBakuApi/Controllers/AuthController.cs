@@ -1,6 +1,7 @@
 ﻿using System.Security.Cryptography;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.RateLimiting;
 using Microsoft.EntityFrameworkCore;
 using NemesisBakuApi.Data;
 using NemesisBakuApi.DTOs.Auth;
@@ -13,14 +14,18 @@ namespace NemesisBakuApi.Controllers;
 
 [ApiController]
 [Route("api/[controller]")]
+[EnableRateLimiting("auth")]
 public class AuthController : ControllerBase
 {
+    private const int MaximumOtpAttempts = 5;
+
     private readonly UserManager<AppUser> _userManager;
     private readonly SignInManager<AppUser> _signInManager;
     private readonly JwtTokenGenerator _jwtTokenGenerator;
     private readonly AppDbContext _context;
     private readonly IEmailService _emailService;
     private readonly IFileService _fileService;
+    private readonly OtpCodeHasher _otpCodeHasher;
 
     public AuthController(
         UserManager<AppUser> userManager,
@@ -28,7 +33,8 @@ public class AuthController : ControllerBase
         JwtTokenGenerator jwtTokenGenerator,
         AppDbContext context,
         IEmailService emailService,
-        IFileService fileService)
+        IFileService fileService,
+        OtpCodeHasher otpCodeHasher)
     {
         _userManager = userManager;
         _signInManager = signInManager;
@@ -36,69 +42,396 @@ public class AuthController : ControllerBase
         _context = context;
         _emailService = emailService;
         _fileService = fileService;
-    }
-
-    private static string CreateOtpCode()
-    {
-        return RandomNumberGenerator.GetInt32(100000, 1000000).ToString();
-    }
-
-    private async Task InvalidatePreviousOtpsAsync(
-        string email,
-        OtpPurpose purpose)
-    {
-        var previousCodes = await _context.UserOtpCodes
-            .Where(x =>
-                x.Email == email &&
-                x.Purpose == purpose &&
-                !x.IsUsed)
-            .ToListAsync();
-
-        foreach (var previousCode in previousCodes)
-        {
-            previousCode.IsUsed = true;
-            previousCode.UsedAt = DateTime.UtcNow;
-        }
+        _otpCodeHasher = otpCodeHasher;
     }
 
     [HttpPost("login")]
-    public async Task<IActionResult> Login(LoginDto dto)
+    public async Task<IActionResult> Login(
+        LoginDto dto,
+        CancellationToken cancellationToken)
     {
         var login = dto.EmailOrPhoneNumber.Trim();
 
-        AppUser? user = login.Contains("@")
-            ? await _userManager.FindByEmailAsync(login)
-            : await _userManager.FindByNameAsync(login);
+        AppUser? user = login.Contains('@')
+            ? await _userManager.FindByEmailAsync(
+                login.ToLowerInvariant())
+            : await _userManager.FindByNameAsync(
+                NormalizePhone(login));
 
-        if (user == null)
-            return Unauthorized(ApiResponse<string>.Fail("Email/nömrə və ya şifrə yanlışdır"));
+        if (user == null ||
+            !user.IsActive ||
+            user.IsDeleted)
+        {
+            return InvalidLogin();
+        }
 
-        if (!user.IsActive || user.IsDeleted)
-            return Unauthorized(ApiResponse<string>.Fail("Hesab aktiv deyil"));
+        var signInResult =
+            await _signInManager
+                .CheckPasswordSignInAsync(
+                    user,
+                    dto.Password,
+                    lockoutOnFailure: true);
 
-        var result = await _signInManager.CheckPasswordSignInAsync(user, dto.Password, false);
-
-        if (!result.Succeeded)
-            return Unauthorized(ApiResponse<string>.Fail("Email/nömrə və ya şifrə yanlışdır"));
+        if (!signInResult.Succeeded)
+        {
+            return InvalidLogin();
+        }
 
         user.LastLoginAt = DateTime.UtcNow;
-        await _userManager.UpdateAsync(user);
 
-        var accessToken = await _jwtTokenGenerator.GenerateTokenAsync(user);
+        var updateResult =
+            await _userManager.UpdateAsync(user);
+
+        if (!updateResult.Succeeded)
+        {
+            return BadRequest(updateResult.Errors);
+        }
+
+        var response = await CreateAuthResponseAsync(
+            user,
+            cancellationToken);
+
+        return Ok(
+            ApiResponse<AuthResponseDto>.Ok(response));
+    }
+
+    [HttpPost("send-register-otp")]
+    [EnableRateLimiting("otp")]
+    public async Task<IActionResult> SendRegisterOtp(
+        SendOtpDto dto,
+        CancellationToken cancellationToken)
+    {
+        var email = NormalizeEmail(dto.Email);
+
+        var existingUser =
+            await _userManager.FindByEmailAsync(email);
+
+        if (existingUser != null)
+        {
+            return BadRequest(
+                ApiResponse<string>.Fail(
+                    "Bu email artıq qeydiyyatdan keçib"));
+        }
+
+        return await CreateAndSendOtpAsync(
+            email,
+            email,
+            OtpPurpose.Register,
+            "Təsdiq kodu emailə göndərildi",
+            cancellationToken);
+    }
+
+    [HttpPost("verify-register-otp")]
+    [Consumes("multipart/form-data")]
+    public async Task<IActionResult> VerifyRegisterOtp(
+        [FromForm] VerifyRegisterOtpDto dto,
+        CancellationToken cancellationToken)
+    {
+        var email = NormalizeEmail(dto.Email);
+        var phone = NormalizePhone(dto.PhoneNumber);
+
+        var existingPhone =
+            await _userManager.FindByNameAsync(phone);
+
+        if (existingPhone != null)
+        {
+            return BadRequest(
+                ApiResponse<string>.Fail(
+                    "Bu nömrə artıq qeydiyyatdan keçib"));
+        }
+
+        var existingEmail =
+            await _userManager.FindByEmailAsync(email);
+
+        if (existingEmail != null)
+        {
+            return BadRequest(
+                ApiResponse<string>.Fail(
+                    "Bu email artıq qeydiyyatdan keçib"));
+        }
+
+        var otp = await FindAndVerifyOtpAsync(
+            email,
+            OtpPurpose.Register,
+            dto.Code,
+            cancellationToken);
+
+        if (otp == null)
+        {
+            return InvalidOtp();
+        }
+
+        string? profileImageUrl = null;
+
+        if (dto.ProfileImage != null)
+        {
+            profileImageUrl =
+                await _fileService.UploadImageAsync(
+                    dto.ProfileImage,
+                    "profiles");
+        }
+
+        var user = new AppUser
+        {
+            FullName = dto.FullName.Trim(),
+            UserName = phone,
+            PhoneNumber = phone,
+            Email = email,
+            DateOfBirth = dto.DateOfBirth,
+
+            LoyaltyCardCode =
+                string.IsNullOrWhiteSpace(
+                    dto.LoyaltyCardCode)
+                    ? null
+                    : dto.LoyaltyCardCode.Trim(),
+
+            ProfileImageUrl = profileImageUrl,
+            TermsAccepted = true,
+            TermsAcceptedAt = DateTime.UtcNow,
+            EmailConfirmed = true,
+            IsActive = true
+        };
+
+        var createResult =
+            await _userManager.CreateAsync(
+                user,
+                dto.Password);
+
+        if (!createResult.Succeeded)
+        {
+            if (!string.IsNullOrWhiteSpace(
+                    profileImageUrl))
+            {
+                await TryDeleteImageAsync(
+                    profileImageUrl);
+            }
+
+            return BadRequest(createResult.Errors);
+        }
+
+        var roleResult =
+            await _userManager.AddToRoleAsync(
+                user,
+                "User");
+
+        if (!roleResult.Succeeded)
+        {
+            await _userManager.DeleteAsync(user);
+
+            if (!string.IsNullOrWhiteSpace(
+                    profileImageUrl))
+            {
+                await TryDeleteImageAsync(
+                    profileImageUrl);
+            }
+
+            return BadRequest(roleResult.Errors);
+        }
+
+        MarkOtpAsUsed(otp);
+
+        await _context.SaveChangesAsync(
+            cancellationToken);
+
+        await _emailService.SendWelcomeAsync(
+            email,
+            user.FullName);
+
+        return Ok(
+            ApiResponse<string>.Ok(
+                "Qeydiyyat uğurla tamamlandı"));
+    }
+
+    [HttpPost("send-forgot-password-otp")]
+    [EnableRateLimiting("otp")]
+    public async Task<IActionResult>
+        SendForgotPasswordOtp(
+            SendOtpDto dto,
+            CancellationToken cancellationToken)
+    {
+        var email = NormalizeEmail(dto.Email);
+
+        var user =
+            await _userManager.FindByEmailAsync(email);
+
+        if (user == null ||
+            user.IsDeleted ||
+            !user.IsActive)
+        {
+            // Email-in sistemdə olub-olmadığını
+            // kənar şəxslərə göstərmirik.
+            return Ok(
+                ApiResponse<string>.Ok(
+                    "Email sistemdə mövcuddursa, " +
+                    "şifrə yeniləmə kodu göndərildi"));
+        }
+
+        return await CreateAndSendOtpAsync(
+            email,
+            email,
+            OtpPurpose.ForgotPassword,
+            "Şifrə yeniləmə kodu emailə göndərildi",
+            cancellationToken);
+    }
+
+    [HttpPost("reset-password-with-otp")]
+    public async Task<IActionResult>
+        ResetPasswordWithOtp(
+            ResetPasswordWithOtpDto dto,
+            CancellationToken cancellationToken)
+    {
+        var email = NormalizeEmail(dto.Email);
+
+        var user =
+            await _userManager.FindByEmailAsync(email);
+
+        if (user == null ||
+            user.IsDeleted ||
+            !user.IsActive)
+        {
+            return InvalidOtp();
+        }
+
+        var otp = await FindAndVerifyOtpAsync(
+            email,
+            OtpPurpose.ForgotPassword,
+            dto.Code,
+            cancellationToken);
+
+        if (otp == null)
+        {
+            return InvalidOtp();
+        }
+
+        var resetToken =
+            await _userManager
+                .GeneratePasswordResetTokenAsync(user);
+
+        var resetResult =
+            await _userManager.ResetPasswordAsync(
+                user,
+                resetToken,
+                dto.NewPassword);
+
+        if (!resetResult.Succeeded)
+        {
+            return BadRequest(resetResult.Errors);
+        }
+
+        MarkOtpAsUsed(otp);
+
+        await RevokeActiveRefreshTokensAsync(
+            user.Id,
+            cancellationToken);
+
+        await _context.SaveChangesAsync(
+            cancellationToken);
+
+        return Ok(
+            ApiResponse<string>.Ok(
+                "Şifrə uğurla yeniləndi"));
+    }
+
+    [HttpPost("refresh-token")]
+    public async Task<IActionResult> RefreshToken(
+        RefreshTokenDto dto,
+        CancellationToken cancellationToken)
+    {
+        await using var transaction =
+            await _context.Database
+                .BeginTransactionAsync(
+                    cancellationToken);
+
+        var refreshToken =
+            await _context.RefreshTokens
+                .Include(x => x.User)
+                .FirstOrDefaultAsync(
+                    x =>
+                        x.Token == dto.RefreshToken &&
+                        !x.IsRevoked &&
+                        !x.IsUsed &&
+                        x.ExpiresAt >
+                            DateTime.UtcNow,
+                    cancellationToken);
+
+        if (refreshToken == null)
+        {
+            return Unauthorized(
+                ApiResponse<string>.Fail(
+                    "Refresh token yanlışdır və ya " +
+                    "vaxtı bitib"));
+        }
+
+        var user = refreshToken.User;
+
+        if (user == null ||
+            !user.IsActive ||
+            user.IsDeleted)
+        {
+            refreshToken.IsRevoked = true;
+
+            await _context.SaveChangesAsync(
+                cancellationToken);
+
+            await transaction.CommitAsync(
+                cancellationToken);
+
+            return Unauthorized(
+                ApiResponse<string>.Fail(
+                    "Hesab aktiv deyil"));
+        }
+
+        refreshToken.IsUsed = true;
+        refreshToken.UsedAt = DateTime.UtcNow;
+
+        var response = await CreateAuthResponseAsync(
+            user,
+            cancellationToken,
+            saveChanges: false);
+
+        await _context.SaveChangesAsync(
+            cancellationToken);
+
+        await transaction.CommitAsync(
+            cancellationToken);
+
+        return Ok(
+            ApiResponse<AuthResponseDto>.Ok(response));
+    }
+
+    private async Task<AuthResponseDto>
+        CreateAuthResponseAsync(
+            AppUser user,
+            CancellationToken cancellationToken,
+            bool saveChanges = true)
+    {
+        var accessToken =
+            await _jwtTokenGenerator
+                .GenerateTokenAsync(user);
 
         var refreshToken = new RefreshToken
         {
             UserId = user.Id,
-            Token = RefreshTokenGenerator.Generate(),
-            ExpiresAt = DateTime.UtcNow.AddDays(30)
+
+            Token =
+                RefreshTokenGenerator.Generate(),
+
+            ExpiresAt =
+                DateTime.UtcNow.AddDays(30)
         };
 
         _context.RefreshTokens.Add(refreshToken);
-        await _context.SaveChangesAsync();
 
-        var roles = await _userManager.GetRolesAsync(user);
+        if (saveChanges)
+        {
+            await _context.SaveChangesAsync(
+                cancellationToken);
+        }
 
-        var response = new AuthResponseDto
+        var roles =
+            await _userManager.GetRolesAsync(user);
+
+        return new AuthResponseDto
         {
             AccessToken = accessToken,
             RefreshToken = refreshToken.Token,
@@ -108,276 +441,211 @@ public class AuthController : ControllerBase
             Email = user.Email,
             Roles = roles
         };
-
-        return Ok(ApiResponse<AuthResponseDto>.Ok(response));
     }
 
-    [HttpPost("send-register-otp")]
-    public async Task<IActionResult> SendRegisterOtp(SendOtpDto dto)
+    private async Task<IActionResult>
+        CreateAndSendOtpAsync(
+            string otpIdentity,
+            string recipientEmail,
+            OtpPurpose purpose,
+            string successMessage,
+            CancellationToken cancellationToken)
     {
-        var email = dto.Email.Trim().ToLowerInvariant();
+        await InvalidatePreviousOtpsAsync(
+            otpIdentity,
+            purpose,
+            cancellationToken);
 
-        var existingUser = await _userManager.FindByEmailAsync(email);
-
-        if (existingUser != null)
-            return BadRequest(ApiResponse<string>.Fail("Bu email artıq qeydiyyatdan keçib"));
-
-        await InvalidatePreviousOtpsAsync(email, OtpPurpose.Register);
         var code = CreateOtpCode();
 
         var otp = new UserOtpCode
         {
-            Email = email,
-            Code = code,
-            Purpose = OtpPurpose.Register,
-            ExpiresAt = DateTime.UtcNow.AddMinutes(5)
+            Email = otpIdentity,
+
+            Code = _otpCodeHasher.Hash(
+                otpIdentity,
+                purpose,
+                code),
+
+            Purpose = purpose,
+            FailedAttemptCount = 0,
+
+            ExpiresAt =
+                DateTime.UtcNow.AddMinutes(5)
         };
 
         _context.UserOtpCodes.Add(otp);
-        await _context.SaveChangesAsync();
 
-        var sent = await _emailService.SendOtpAsync(email, code);
+        await _context.SaveChangesAsync(
+            cancellationToken);
+
+        var sent = await _emailService.SendOtpAsync(
+            recipientEmail,
+            code);
 
         if (!sent)
         {
-            otp.IsUsed = true;
-            otp.UsedAt = DateTime.UtcNow;
-            await _context.SaveChangesAsync();
-            return BadRequest(ApiResponse<string>.Fail("Email təsdiq kodu göndərilmədi"));
+            MarkOtpAsUsed(otp);
+
+            await _context.SaveChangesAsync(
+                cancellationToken);
+
+            return BadRequest(
+                ApiResponse<string>.Fail(
+                    "Email təsdiq kodu göndərilmədi"));
         }
 
-        return Ok(ApiResponse<string>.Ok("Təsdiq kodu emailə göndərildi"));
+        return Ok(
+            ApiResponse<string>.Ok(successMessage));
     }
 
-    [HttpPost("verify-register-otp")]
-    [Consumes("multipart/form-data")]
-    public async Task<IActionResult> VerifyRegisterOtp([FromForm] VerifyRegisterOtpDto dto)
+    private async Task<UserOtpCode?>
+        FindAndVerifyOtpAsync(
+            string email,
+            OtpPurpose purpose,
+            string code,
+            CancellationToken cancellationToken)
     {
-        if (!dto.TermsAccepted)
-            return BadRequest(ApiResponse<string>.Fail("İstifadə şərtlərini qəbul etməlisiniz"));
-
-        if (dto.Password != dto.ConfirmPassword)
-            return BadRequest(ApiResponse<string>.Fail("Şifrələr uyğun deyil"));
-
-        var existingPhone = await _userManager.FindByNameAsync(dto.PhoneNumber);
-
-        if (existingPhone != null)
-            return BadRequest(ApiResponse<string>.Fail("Bu nömrə artıq qeydiyyatdan keçib"));
-
-        var email = dto.Email.Trim().ToLowerInvariant();
-        var existingEmail = await _userManager.FindByEmailAsync(email);
-
-        if (existingEmail != null)
-            return BadRequest(ApiResponse<string>.Fail("Bu email artıq qeydiyyatdan keçib"));
+        var now = DateTime.UtcNow;
 
         var otp = await _context.UserOtpCodes
             .Where(x =>
                 x.Email == email &&
-                x.Code == dto.Code &&
-                x.Purpose == OtpPurpose.Register &&
+                x.Purpose == purpose &&
                 !x.IsUsed &&
-                x.ExpiresAt > DateTime.UtcNow)
+                x.ExpiresAt > now)
             .OrderByDescending(x => x.CreatedAt)
-            .FirstOrDefaultAsync();
+            .FirstOrDefaultAsync(cancellationToken);
 
         if (otp == null)
-            return BadRequest(ApiResponse<string>.Fail("Təsdiq kodu yanlışdır və ya vaxtı bitib"));
-
-        string? profileImageUrl = null;
-
-        if (dto.ProfileImage != null)
         {
-            try
-            {
-                profileImageUrl = await _fileService.UploadImageAsync(
-                    dto.ProfileImage,
-                    "profiles");
-            }
-            catch (InvalidOperationException ex)
-            {
-                return BadRequest(ApiResponse<string>.Fail(ex.Message));
-            }
+            return null;
         }
 
-        var user = new AppUser
+        var isValid = _otpCodeHasher.Verify(
+            email,
+            purpose,
+            code,
+            otp.Code);
+
+        if (isValid)
         {
-            FullName = dto.FullName,
-            UserName = dto.PhoneNumber,
-            PhoneNumber = dto.PhoneNumber,
-            Email = email,
-            DateOfBirth = dto.DateOfBirth,
-            LoyaltyCardCode = dto.LoyaltyCardCode,
-            ProfileImageUrl = profileImageUrl,
-            TermsAccepted = true,
-            TermsAcceptedAt = DateTime.UtcNow,
-            IsActive = true
-        };
-
-        var result = await _userManager.CreateAsync(user, dto.Password);
-
-        if (!result.Succeeded)
-        {
-            if (!string.IsNullOrWhiteSpace(profileImageUrl))
-                await _fileService.DeleteImageAsync(profileImageUrl);
-
-            return BadRequest(result.Errors);
+            return otp;
         }
 
-        await _userManager.AddToRoleAsync(user, "User");
+        otp.FailedAttemptCount++;
 
-        otp.IsUsed = true;
-        otp.UsedAt = DateTime.UtcNow;
+        if (otp.FailedAttemptCount >=
+            MaximumOtpAttempts)
+        {
+            MarkOtpAsUsed(otp);
+        }
 
-        await _context.SaveChangesAsync();
+        await _context.SaveChangesAsync(
+            cancellationToken);
 
-        await _emailService.SendWelcomeAsync(email, dto.FullName);
-
-        return Ok(ApiResponse<string>.Ok("Qeydiyyat uğurla tamamlandı"));
+        return null;
     }
 
-    [HttpPost("send-forgot-password-otp")]
-    public async Task<IActionResult> SendForgotPasswordOtp(SendOtpDto dto)
+    private async Task InvalidatePreviousOtpsAsync(
+        string email,
+        OtpPurpose purpose,
+        CancellationToken cancellationToken)
     {
-        var email = dto.Email.Trim().ToLowerInvariant();
+        var now = DateTime.UtcNow;
 
-        var user = await _userManager.FindByEmailAsync(email);
-
-        if (user == null)
-            return BadRequest(ApiResponse<string>.Fail("Bu email ilə istifadəçi tapılmadı"));
-
-        await InvalidatePreviousOtpsAsync(email, OtpPurpose.ForgotPassword);
-        var code = CreateOtpCode();
-
-        var otp = new UserOtpCode
-        {
-            Email = email,
-            Code = code,
-            Purpose = OtpPurpose.ForgotPassword,
-            ExpiresAt = DateTime.UtcNow.AddMinutes(5)
-        };
-
-        _context.UserOtpCodes.Add(otp);
-        await _context.SaveChangesAsync();
-
-        var sent = await _emailService.SendOtpAsync(email, code);
-
-        if (!sent)
-        {
-            otp.IsUsed = true;
-            otp.UsedAt = DateTime.UtcNow;
-            await _context.SaveChangesAsync();
-            return BadRequest(ApiResponse<string>.Fail("Email təsdiq kodu göndərilmədi"));
-        }
-
-        return Ok(ApiResponse<string>.Ok("Şifrə yeniləmə kodu emailə göndərildi"));
-    }
-
-    [HttpPost("reset-password-with-otp")]
-    public async Task<IActionResult> ResetPasswordWithOtp(ResetPasswordWithOtpDto dto)
-    {
-        if (dto.NewPassword != dto.ConfirmNewPassword)
-            return BadRequest(ApiResponse<string>.Fail("Şifrələr uyğun deyil"));
-
-        var email = dto.Email.Trim().ToLowerInvariant();
-
-        var user = await _userManager.FindByEmailAsync(email);
-
-        if (user == null)
-            return BadRequest(ApiResponse<string>.Fail("Bu email ilə istifadəçi tapılmadı"));
-
-        var otp = await _context.UserOtpCodes
+        await _context.UserOtpCodes
             .Where(x =>
                 x.Email == email &&
-                x.Code == dto.Code &&
-                x.Purpose == OtpPurpose.ForgotPassword &&
-                !x.IsUsed &&
-                x.ExpiresAt > DateTime.UtcNow)
-            .OrderByDescending(x => x.CreatedAt)
-            .FirstOrDefaultAsync();
+                x.Purpose == purpose &&
+                !x.IsUsed)
+            .ExecuteUpdateAsync(
+                setters => setters
+                    .SetProperty(
+                        x => x.IsUsed,
+                        true)
+                    .SetProperty(
+                        x => x.UsedAt,
+                        now),
+                cancellationToken);
+    }
 
-        if (otp == null)
-            return BadRequest(ApiResponse<string>.Fail("Təsdiq kodu yanlışdır və ya vaxtı bitib"));
-
-        var resetToken = await _userManager.GeneratePasswordResetTokenAsync(user);
-
-        var result = await _userManager.ResetPasswordAsync(
-            user,
-            resetToken,
-            dto.NewPassword);
-
-        if (!result.Succeeded)
-            return BadRequest(result.Errors);
-
-        otp.IsUsed = true;
-        otp.UsedAt = DateTime.UtcNow;
-
-        var activeRefreshTokens = await _context.RefreshTokens
+    private async Task
+        RevokeActiveRefreshTokensAsync(
+            Guid userId,
+            CancellationToken cancellationToken)
+    {
+        await _context.RefreshTokens
             .Where(x =>
-                x.UserId == user.Id &&
+                x.UserId == userId &&
                 !x.IsUsed &&
                 !x.IsRevoked)
-            .ToListAsync();
-
-        foreach (var token in activeRefreshTokens)
-            token.IsRevoked = true;
-
-        await _context.SaveChangesAsync();
-
-        return Ok(ApiResponse<string>.Ok("Şifrə uğurla yeniləndi"));
+            .ExecuteUpdateAsync(
+                setters => setters
+                    .SetProperty(
+                        x => x.IsRevoked,
+                        true)
+                    .SetProperty(
+                        x => x.UpdatedAt,
+                        DateTime.UtcNow),
+                cancellationToken);
     }
 
-    [HttpPost("refresh-token")]
-    public async Task<IActionResult> RefreshToken(RefreshTokenDto dto)
+    private static void MarkOtpAsUsed(
+        UserOtpCode otp)
     {
-        var refreshToken = await _context.RefreshTokens
-            .Include(x => x.User)
-            .FirstOrDefaultAsync(x =>
-                x.Token == dto.RefreshToken &&
-                !x.IsRevoked &&
-                !x.IsUsed &&
-                x.ExpiresAt > DateTime.UtcNow);
+        otp.IsUsed = true;
+        otp.UsedAt = DateTime.UtcNow;
+    }
 
-        if (refreshToken == null)
-            return Unauthorized(ApiResponse<string>.Fail("Refresh token yanlışdır və ya vaxtı bitib"));
-
-        refreshToken.IsUsed = true;
-        refreshToken.UsedAt = DateTime.UtcNow;
-
-        var user = refreshToken.User;
-
-        if (user == null || !user.IsActive || user.IsDeleted)
+    private async Task TryDeleteImageAsync(
+        string imageUrl)
+    {
+        try
         {
-            refreshToken.IsRevoked = true;
-            await _context.SaveChangesAsync();
-            return Unauthorized(ApiResponse<string>.Fail("Hesab aktiv deyil"));
+            await _fileService.DeleteImageAsync(
+                imageUrl);
         }
-
-        var newAccessToken = await _jwtTokenGenerator.GenerateTokenAsync(user);
-
-        var newRefreshToken = new RefreshToken
+        catch
         {
-            UserId = user.Id,
-            Token = RefreshTokenGenerator.Generate(),
-            ExpiresAt = DateTime.UtcNow.AddDays(30)
-        };
+            // Şəkil təmizlənməsi auth prosesini pozmasın.
+        }
+    }
 
-        _context.RefreshTokens.Add(newRefreshToken);
+    private static string CreateOtpCode()
+    {
+        return RandomNumberGenerator
+            .GetInt32(100000, 1000000)
+            .ToString();
+    }
 
-        await _context.SaveChangesAsync();
+    private static string NormalizeEmail(
+        string email)
+    {
+        return email
+            .Trim()
+            .ToLowerInvariant();
+    }
 
-        var roles = await _userManager.GetRolesAsync(user);
+    private static string NormalizePhone(
+        string phone)
+    {
+        return new string(
+            phone.Where(char.IsDigit).ToArray());
+    }
 
-        var response = new AuthResponseDto
-        {
-            AccessToken = newAccessToken,
-            RefreshToken = newRefreshToken.Token,
-            UserId = user.Id.ToString(),
-            FullName = user.FullName,
-            PhoneNumber = user.PhoneNumber ?? "",
-            Email = user.Email,
-            Roles = roles
-        };
+    private IActionResult InvalidLogin()
+    {
+        return Unauthorized(
+            ApiResponse<string>.Fail(
+                "Email/nömrə və ya şifrə yanlışdır"));
+    }
 
-        return Ok(ApiResponse<AuthResponseDto>.Ok(response));
+    private IActionResult InvalidOtp()
+    {
+        return BadRequest(
+            ApiResponse<string>.Fail(
+                "Təsdiq kodu yanlışdır və ya " +
+                "vaxtı bitib"));
     }
 }
