@@ -16,6 +16,8 @@ namespace NemesisBakuApi.Controllers;
 [Authorize(Roles = "SuperAdmin")]
 public class AdminUsersController : ControllerBase
 {
+    private const int MaxUserDetailOrders = 100;
+
     private readonly AppDbContext _context;
     private readonly UserManager<AppUser> _userManager;
     private readonly IAuditLogService _auditLogService;
@@ -50,14 +52,21 @@ public class AdminUsersController : ControllerBase
 
         if (!string.IsNullOrWhiteSpace(search))
         {
-            var value = search.Trim().ToLower();
+            var value = search.Trim();
+            var pattern = $"%{value}%";
 
             query = query.Where(x =>
-                x.FullName.ToLower().Contains(value) ||
+                EF.Functions.Like(
+                    x.FullName,
+                    pattern) ||
                 (x.PhoneNumber != null &&
-                 x.PhoneNumber.ToLower().Contains(value)) ||
+                 EF.Functions.Like(
+                     x.PhoneNumber,
+                     pattern)) ||
                 (x.Email != null &&
-                 x.Email.ToLower().Contains(value)));
+                 EF.Functions.Like(
+                     x.Email,
+                     pattern)));
         }
 
         if (!string.IsNullOrWhiteSpace(role))
@@ -210,6 +219,7 @@ public class AdminUsersController : ControllerBase
             .AsNoTracking()
             .Where(x => x.UserId == user.Id)
             .OrderByDescending(x => x.CreatedAt)
+            .Take(MaxUserDetailOrders)
             .Select(x => new UserOrderMiniDto
             {
                 Id = x.Id,
@@ -219,6 +229,12 @@ public class AdminUsersController : ControllerBase
                 CreatedAt = x.CreatedAt
             })
             .ToListAsync(cancellationToken);
+
+        var orderCount = await _context.Orders
+            .AsNoTracking()
+            .CountAsync(
+                x => x.UserId == user.Id,
+                cancellationToken);
 
         var basketItemCount =
             await _context.BasketItems
@@ -249,7 +265,7 @@ public class AdminUsersController : ControllerBase
 
             BasketItemCount = basketItemCount,
             FavoriteCount = favoriteCount,
-            OrderCount = orders.Count,
+            OrderCount = orderCount,
             Orders = orders
         };
 

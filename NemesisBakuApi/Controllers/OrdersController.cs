@@ -178,6 +178,7 @@ public class OrdersController : ControllerBase
         try
         {
             var basketItems = await _context.BasketItems
+                .AsSplitQuery()
                 .Include(x => x.Product)
                     .ThenInclude(x => x.Images)
                 .Include(x => x.ProductVariant)
@@ -435,15 +436,18 @@ public class OrdersController : ControllerBase
     }
 
     [HttpGet("my")]
-    public async Task<IActionResult> GetMyOrders()
+    public async Task<IActionResult> GetMyOrders(
+        [FromQuery] int limit = 100,
+        CancellationToken cancellationToken = default)
     {
-        var cancellationToken = HttpContext.RequestAborted;
         var userId = GetUserId();
+        limit = Math.Clamp(limit, 1, 200);
 
         var orders = await _context.Orders
             .AsNoTracking()
             .Where(x => x.UserId == userId)
             .OrderByDescending(x => x.CreatedAt)
+            .Take(limit)
             .Select(x => new OrderListDto
             {
                 Id = x.Id,
@@ -460,81 +464,68 @@ public class OrdersController : ControllerBase
     }
 
     [HttpGet("{id:guid}")]
-    public async Task<IActionResult> GetOrderDetail(Guid id)
+    public async Task<IActionResult> GetOrderDetail(
+        Guid id,
+        CancellationToken cancellationToken)
     {
-        var cancellationToken = HttpContext.RequestAborted;
         var userId = GetUserId();
 
-        var order = await _context.Orders
+        var result = await _context.Orders
             .AsNoTracking()
-            .Include(x => x.Items)
-            .FirstOrDefaultAsync(
-                x => x.Id == id && x.UserId == userId,
-                cancellationToken);
+            .Where(x =>
+                x.Id == id &&
+                x.UserId == userId)
+            .Select(order => new OrderDetailDto
+            {
+                Id = order.Id,
+                OrderNumber = order.OrderNumber,
+                CustomerFullName = order.CustomerFullName,
+                CustomerPhoneNumber = order.CustomerPhoneNumber,
+                DeliveryType = order.DeliveryType,
+                PaymentMethod = order.PaymentMethod,
+                AddressText = order.AddressText,
+                Latitude = order.Latitude,
+                Longitude = order.Longitude,
+                BuildingNumber = order.BuildingNumber,
+                Floor = order.Floor,
+                Apartment = order.Apartment,
+                DeliveryDate = order.DeliveryDate,
+                DeliveryTimeRange = order.DeliveryTimeRange,
+                DeliveryPrice = order.DeliveryPrice,
+                DeliveryDistanceKm = order.DeliveryDistanceKm,
+                Note = order.Note,
+                TotalProductPrice = order.TotalProductPrice,
+                PromoDiscountAmount = order.PromoDiscountAmount,
+                TotalPrice = order.TotalPrice,
+                Status = order.Status,
+                IsWhatsappMessageSent = order.IsWhatsappMessageSent,
+                WhatsappMessageSentAt = order.WhatsappMessageSentAt,
+                CreatedAt = order.CreatedAt,
+                Items = order.Items
+                    .OrderBy(x => x.CreatedAt)
+                    .Select(x => new OrderItemDto
+                    {
+                        ProductId = x.ProductId,
+                        ProductVariantId = x.ProductVariantId,
+                        ProductName = x.ProductName,
+                        ProductCode = x.ProductCode,
+                        SizeValue = x.SizeValue,
+                        ColorName = x.ColorName,
+                        UnitPrice = x.UnitPrice,
+                        Quantity = x.Quantity,
+                        TotalPrice = x.TotalPrice,
+                        ProductImageUrl = x.ProductImageUrl,
+                        ProductLink = x.ProductLink
+                    })
+                    .ToList()
+            })
+            .FirstOrDefaultAsync(cancellationToken);
 
-        if (order == null)
+        if (result == null)
         {
             return NotFound(
                 ApiResponse<string>.Fail("Sifariş tapılmadı"));
         }
-
-        var result = new OrderDetailDto
-        {
-            Id = order.Id,
-            OrderNumber = order.OrderNumber,
-
-            CustomerFullName = order.CustomerFullName,
-            CustomerPhoneNumber = order.CustomerPhoneNumber,
-
-            DeliveryType = order.DeliveryType,
-            PaymentMethod = order.PaymentMethod,
-
-            AddressText = order.AddressText,
-            Latitude = order.Latitude,
-            Longitude = order.Longitude,
-
-            BuildingNumber = order.BuildingNumber,
-            Floor = order.Floor,
-            Apartment = order.Apartment,
-
-            DeliveryDate = order.DeliveryDate,
-            DeliveryTimeRange = order.DeliveryTimeRange,
-
-            DeliveryPrice = order.DeliveryPrice,
-            DeliveryDistanceKm = order.DeliveryDistanceKm,
-
-            Note = order.Note,
-
-            TotalProductPrice = order.TotalProductPrice,
-            PromoDiscountAmount = order.PromoDiscountAmount,
-            TotalPrice = order.TotalPrice,
-
-            Status = order.Status,
-
-            IsWhatsappMessageSent = order.IsWhatsappMessageSent,
-            WhatsappMessageSentAt = order.WhatsappMessageSentAt,
-
-            CreatedAt = order.CreatedAt,
-
-            Items = order.Items.Select(x => new OrderItemDto
-            {
-                ProductId = x.ProductId,
-                ProductVariantId = x.ProductVariantId,
-
-                ProductName = x.ProductName,
-                ProductCode = x.ProductCode,
-
-                SizeValue = x.SizeValue,
-                ColorName = x.ColorName,
-
-                UnitPrice = x.UnitPrice,
-                Quantity = x.Quantity,
-                TotalPrice = x.TotalPrice,
-
-                ProductImageUrl = x.ProductImageUrl,
-                ProductLink = x.ProductLink
-            }).ToList()
-        };
 
         return Ok(ApiResponse<OrderDetailDto>.Ok(result));
     }

@@ -1,4 +1,5 @@
 ﻿using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.OutputCaching;
 using Microsoft.EntityFrameworkCore;
 using NemesisBakuApi.Data;
 using NemesisBakuApi.DTOs.HomeSection;
@@ -19,6 +20,8 @@ public class HomeSectionsController : ControllerBase
     }
 
     [HttpGet("active")]
+    [OutputCache(
+        PolicyName = ProductCacheTags.ProductListsPolicy)]
     public async Task<IActionResult> GetActive(
         CancellationToken cancellationToken)
     {
@@ -32,6 +35,7 @@ public class HomeSectionsController : ControllerBase
                 x.StartDate <= now &&
                 x.EndDate >= now)
             .OrderBy(x => x.DisplayOrder)
+            .Take(20)
             .Select(x => new ActiveHomeSectionDto
             {
                 Id = x.Id,
@@ -40,8 +44,11 @@ public class HomeSectionsController : ControllerBase
                 DisplayOrder = x.DisplayOrder,
 
                 Products = x.Products
+                    .Where(product =>
+                        product.Product.IsActive)
                     .OrderBy(product =>
                         product.Order)
+                    .Take(50)
                     .Select(product =>
                         new HomeSectionProductDto
                         {

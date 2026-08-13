@@ -1,6 +1,7 @@
 ﻿using System.Security.Claims;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.Data.SqlClient;
 using Microsoft.EntityFrameworkCore;
 using NemesisBakuApi.Data;
 using NemesisBakuApi.DTOs.Basket;
@@ -28,10 +29,10 @@ public class BasketController : ControllerBase
 
     private Guid GetUserId()
     {
-        var userIdValue = User.FindFirstValue(
+        var value = User.FindFirstValue(
             ClaimTypes.NameIdentifier);
 
-        if (!Guid.TryParse(userIdValue, out var userId))
+        if (!Guid.TryParse(value, out var userId))
         {
             throw new UnauthorizedAccessException();
         }
@@ -53,34 +54,23 @@ public class BasketController : ControllerBase
             {
                 Id = x.Id,
                 ProductId = x.ProductId,
-                ProductVariantId =
-                    x.ProductVariantId,
-
+                ProductVariantId = x.ProductVariantId,
                 ProductName = x.Product.Name,
-                ProductCode =
-                    x.Product.ProductCode,
+                ProductCode = x.Product.ProductCode,
 
-                ProductImageUrl =
-                    x.Product.Images
-                        .OrderByDescending(
-                            image => image.IsMain)
-                        .ThenBy(
-                            image => image.Order)
-                        .Select(
-                            image => image.ImageUrl)
-                        .FirstOrDefault(),
+                ProductImageUrl = x.Product.Images
+                    .OrderByDescending(image => image.IsMain)
+                    .ThenBy(image => image.Order)
+                    .Select(image => image.ImageUrl)
+                    .FirstOrDefault(),
 
-                SizeValue =
-                    x.ProductVariant.Size.Value,
-
-                ColorName =
-                    x.ProductVariant.Color.Name,
+                SizeValue = x.ProductVariant.Size.Value,
+                ColorName = x.ProductVariant.Color.Name,
 
                 ColorHexCode =
                     x.ProductVariant.Color.HexCode,
 
-                OriginalPrice =
-                    x.Product.Price,
+                OriginalPrice = x.Product.Price,
 
                 UnitPrice =
                     x.Product.DiscountPrice.HasValue &&
@@ -180,16 +170,17 @@ public class BasketController : ControllerBase
                     "Məhsul tapılmadı"));
         }
 
-        var variant = await _context.ProductVariants
-            .AsNoTracking()
-            .FirstOrDefaultAsync(
-                x =>
+        var stockCount =
+            await _context.ProductVariants
+                .AsNoTracking()
+                .Where(x =>
                     x.Id == dto.ProductVariantId &&
                     x.ProductId == dto.ProductId &&
-                    x.IsActive,
-                cancellationToken);
+                    x.IsActive)
+                .Select(x => (int?)x.StockCount)
+                .FirstOrDefaultAsync(cancellationToken);
 
-        if (variant == null)
+        if (!stockCount.HasValue)
         {
             return NotFound(
                 ApiResponse<string>.Fail(
@@ -197,78 +188,115 @@ public class BasketController : ControllerBase
                     "razmer/rəngi tapılmadı"));
         }
 
-        if (variant.StockCount <= 0)
+        if (stockCount.Value <= 0)
         {
             return BadRequest(
                 ApiResponse<string>.Fail(
                     "Bu məhsul stokda yoxdur"));
         }
 
-        if (dto.Quantity > variant.StockCount)
+        if (dto.Quantity > stockCount.Value)
         {
-            return BadRequest(
-                ApiResponse<string>.Fail(
-                    "Stokda kifayət qədər " +
-                    "məhsul yoxdur"));
+            return InsufficientStock();
         }
 
-        var existingItem =
+        var updatedRows =
+            await IncrementActiveItemAsync(
+                userId,
+                dto.ProductVariantId,
+                dto.Quantity,
+                stockCount.Value,
+                DateTime.UtcNow,
+                cancellationToken);
+
+        if (updatedRows > 0)
+        {
+            return BasketAddSuccess();
+        }
+
+        var activeItemExists =
             await _context.BasketItems
-                .IgnoreQueryFilters()
-                .FirstOrDefaultAsync(
+                .AsNoTracking()
+                .AnyAsync(
                     x =>
                         x.UserId == userId &&
                         x.ProductVariantId ==
                         dto.ProductVariantId,
                     cancellationToken);
 
-        var updatedAt = DateTime.UtcNow;
-
-        if (existingItem == null)
+        if (activeItemExists)
         {
-            _context.BasketItems.Add(
-                new BasketItem
-                {
-                    UserId = userId,
-                    ProductId = dto.ProductId,
-
-                    ProductVariantId =
-                        dto.ProductVariantId,
-
-                    Quantity = dto.Quantity
-                });
+            return InsufficientStock();
         }
-        else if (existingItem.IsDeleted)
-        {
-            existingItem.IsDeleted = false;
-            existingItem.ProductId = dto.ProductId;
-            existingItem.Quantity = dto.Quantity;
-            existingItem.UpdatedAt = updatedAt;
-        }
-        else
-        {
-            var newQuantity =
-                existingItem.Quantity +
-                dto.Quantity;
 
-            if (newQuantity > variant.StockCount)
+        var restoredRows =
+            await _context.BasketItems
+                .IgnoreQueryFilters()
+                .Where(x =>
+                    x.UserId == userId &&
+                    x.ProductVariantId ==
+                    dto.ProductVariantId &&
+                    x.IsDeleted)
+                .ExecuteUpdateAsync(
+                    setters => setters
+                        .SetProperty(
+                            x => x.IsDeleted,
+                            false)
+                        .SetProperty(
+                            x => x.ProductId,
+                            dto.ProductId)
+                        .SetProperty(
+                            x => x.Quantity,
+                            dto.Quantity)
+                        .SetProperty(
+                            x => x.UpdatedAt,
+                            DateTime.UtcNow),
+                    cancellationToken);
+
+        if (restoredRows > 0)
+        {
+            return BasketAddSuccess();
+        }
+
+        _context.BasketItems.Add(
+            new BasketItem
             {
-                return BadRequest(
-                    ApiResponse<string>.Fail(
-                        "Stokda kifayət qədər " +
-                        "məhsul yoxdur"));
-            }
+                UserId = userId,
+                ProductId = dto.ProductId,
 
-            existingItem.Quantity = newQuantity;
-            existingItem.UpdatedAt = updatedAt;
+                ProductVariantId =
+                    dto.ProductVariantId,
+
+                Quantity = dto.Quantity
+            });
+
+        try
+        {
+            await _context.SaveChangesAsync(
+                cancellationToken);
+
+            return BasketAddSuccess();
         }
+        catch (DbUpdateException exception)
+            when (IsUniqueConstraintViolation(exception))
+        {
+            // Paralel sorğu sətri yaradıbsa,
+            // səbətdəki miqdarı atomik artırırıq.
+            _context.ChangeTracker.Clear();
 
-        await _context.SaveChangesAsync(
-            cancellationToken);
+            updatedRows =
+                await IncrementActiveItemAsync(
+                    userId,
+                    dto.ProductVariantId,
+                    dto.Quantity,
+                    stockCount.Value,
+                    DateTime.UtcNow,
+                    cancellationToken);
 
-        return Ok(
-            ApiResponse<string>.Ok(
-                "Məhsul səbətə əlavə olundu"));
+            return updatedRows > 0
+                ? BasketAddSuccess()
+                : InsufficientStock();
+        }
     }
 
     [HttpPut("{basketItemId:guid}")]
@@ -286,43 +314,61 @@ public class BasketController : ControllerBase
                     "Miqdar düzgün deyil"));
         }
 
-        var basketItem =
+        var itemInfo =
             await _context.BasketItems
-                .Include(x => x.ProductVariant)
-                .FirstOrDefaultAsync(
-                    x =>
-                        x.Id == basketItemId &&
-                        x.UserId == userId,
-                    cancellationToken);
+                .AsNoTracking()
+                .Where(x =>
+                    x.Id == basketItemId &&
+                    x.UserId == userId)
+                .Select(x => new
+                {
+                    VariantIsActive =
+                        x.ProductVariant.IsActive,
 
-        if (basketItem == null)
+                    x.ProductVariant.StockCount
+                })
+                .FirstOrDefaultAsync(cancellationToken);
+
+        if (itemInfo == null)
         {
             return NotFound(
                 ApiResponse<string>.Fail(
                     "Səbət məhsulu tapılmadı"));
         }
 
-        if (!basketItem.ProductVariant.IsActive)
+        if (!itemInfo.VariantIsActive)
         {
             return BadRequest(
                 ApiResponse<string>.Fail(
                     "Məhsul variantı aktiv deyil"));
         }
 
-        if (dto.Quantity >
-            basketItem.ProductVariant.StockCount)
+        if (dto.Quantity > itemInfo.StockCount)
         {
-            return BadRequest(
-                ApiResponse<string>.Fail(
-                    "Stokda kifayət qədər " +
-                    "məhsul yoxdur"));
+            return InsufficientStock();
         }
 
-        basketItem.Quantity = dto.Quantity;
-        basketItem.UpdatedAt = DateTime.UtcNow;
+        var updatedRows =
+            await _context.BasketItems
+                .Where(x =>
+                    x.Id == basketItemId &&
+                    x.UserId == userId)
+                .ExecuteUpdateAsync(
+                    setters => setters
+                        .SetProperty(
+                            x => x.Quantity,
+                            dto.Quantity)
+                        .SetProperty(
+                            x => x.UpdatedAt,
+                            DateTime.UtcNow),
+                    cancellationToken);
 
-        await _context.SaveChangesAsync(
-            cancellationToken);
+        if (updatedRows == 0)
+        {
+            return NotFound(
+                ApiResponse<string>.Fail(
+                    "Səbət məhsulu tapılmadı"));
+        }
 
         return Ok(
             ApiResponse<string>.Ok(
@@ -336,26 +382,27 @@ public class BasketController : ControllerBase
     {
         var userId = GetUserId();
 
-        var basketItem =
+        var updatedRows =
             await _context.BasketItems
-                .FirstOrDefaultAsync(
-                    x =>
-                        x.Id == basketItemId &&
-                        x.UserId == userId,
+                .Where(x =>
+                    x.Id == basketItemId &&
+                    x.UserId == userId)
+                .ExecuteUpdateAsync(
+                    setters => setters
+                        .SetProperty(
+                            x => x.IsDeleted,
+                            true)
+                        .SetProperty(
+                            x => x.UpdatedAt,
+                            DateTime.UtcNow),
                     cancellationToken);
 
-        if (basketItem == null)
+        if (updatedRows == 0)
         {
             return NotFound(
                 ApiResponse<string>.Fail(
                     "Səbət məhsulu tapılmadı"));
         }
-
-        basketItem.IsDeleted = true;
-        basketItem.UpdatedAt = DateTime.UtcNow;
-
-        await _context.SaveChangesAsync(
-            cancellationToken);
 
         return Ok(
             ApiResponse<string>.Ok(
@@ -367,7 +414,6 @@ public class BasketController : ControllerBase
         CancellationToken cancellationToken)
     {
         var userId = GetUserId();
-        var updatedAt = DateTime.UtcNow;
 
         await _context.BasketItems
             .Where(x => x.UserId == userId)
@@ -378,12 +424,59 @@ public class BasketController : ControllerBase
                         true)
                     .SetProperty(
                         x => x.UpdatedAt,
-                        updatedAt),
+                        DateTime.UtcNow),
                 cancellationToken);
 
         return Ok(
             ApiResponse<string>.Ok(
                 "Səbət təmizləndi"));
+    }
+
+    private Task<int> IncrementActiveItemAsync(
+        Guid userId,
+        Guid productVariantId,
+        int quantity,
+        int stockCount,
+        DateTime updatedAt,
+        CancellationToken cancellationToken)
+    {
+        return _context.BasketItems
+            .Where(x =>
+                x.UserId == userId &&
+                x.ProductVariantId == productVariantId &&
+                x.Quantity + quantity <= stockCount)
+            .ExecuteUpdateAsync(
+                setters => setters
+                    .SetProperty(
+                        x => x.Quantity,
+                        x => x.Quantity + quantity)
+                    .SetProperty(
+                        x => x.UpdatedAt,
+                        updatedAt),
+                cancellationToken);
+    }
+
+    private IActionResult BasketAddSuccess()
+    {
+        return Ok(
+            ApiResponse<string>.Ok(
+                "Məhsul səbətə əlavə olundu"));
+    }
+
+    private IActionResult InsufficientStock()
+    {
+        return BadRequest(
+            ApiResponse<string>.Fail(
+                "Stokda kifayət qədər məhsul yoxdur"));
+    }
+
+    private static bool IsUniqueConstraintViolation(
+        DbUpdateException exception)
+    {
+        return exception.InnerException is SqlException
+        {
+            Number: 2601 or 2627
+        };
     }
 
     private async Task SendLowStockEmailsAsync(
@@ -418,15 +511,15 @@ public class BasketController : ControllerBase
             .Distinct()
             .ToList();
 
-        var sentVariantIds = await _context
-    .BasketLowStockEmailLogs
-    .AsNoTracking()
-    .Where(x =>
-        x.UserId == userId &&
-        variantIds.Contains(
-            x.ProductVariantId))
-    .Select(x => x.ProductVariantId)
-    .ToListAsync(cancellationToken);
+        var sentVariantIds =
+            await _context.BasketLowStockEmailLogs
+                .AsNoTracking()
+                .Where(x =>
+                    x.UserId == userId &&
+                    variantIds.Contains(
+                        x.ProductVariantId))
+                .Select(x => x.ProductVariantId)
+                .ToListAsync(cancellationToken);
 
         var alreadySentVariantIds =
             sentVariantIds.ToHashSet();
@@ -441,16 +534,13 @@ public class BasketController : ControllerBase
                 continue;
             }
 
-            var productLink =
-                "https://nemesisbaku.az/products/" +
-                item.ProductId;
-
             var sent =
                 await _emailService
                     .SendBasketLowStockAsync(
                         userEmail,
                         item.ProductName,
-                        productLink,
+                        "https://nemesisbaku.az/products/" +
+                        item.ProductId,
                         item.StockCount);
 
             if (!sent)
@@ -481,10 +571,22 @@ public class BasketController : ControllerBase
             addedLog = true;
         }
 
-        if (addedLog)
+        if (!addedLog)
+        {
+            return;
+        }
+
+        try
         {
             await _context.SaveChangesAsync(
                 cancellationToken);
+        }
+        catch (DbUpdateException exception)
+            when (IsUniqueConstraintViolation(exception))
+        {
+            // Paralel GET eyni logu yazıbsa
+            // istifadəçiyə 500 qaytarmırıq.
+            _context.ChangeTracker.Clear();
         }
     }
 }

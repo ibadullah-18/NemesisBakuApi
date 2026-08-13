@@ -17,6 +17,9 @@ namespace NemesisBakuApi.Controllers;
 [Authorize(Roles = "SuperAdmin,Admin")]
 public class AdminProductsController : ControllerBase
 {
+    private const int MaxAdminProductListSize = 500;
+    private const int MaxLowStockListSize = 500;
+
     private static readonly Regex SizeNumberRegex = new(
         @"\d+(?:[.,]\d+)?",
         RegexOptions.Compiled | RegexOptions.CultureInvariant);
@@ -36,31 +39,64 @@ public class AdminProductsController : ControllerBase
     }
 
     [HttpPost]
-    public async Task<IActionResult> Create(ProductCreateDto dto)
+    public async Task<IActionResult> Create(
+        ProductCreateDto dto,
+        CancellationToken cancellationToken)
     {
-        var categoryExists = await _context.Categories.AnyAsync(x => x.Id == dto.CategoryId);
+        var categoryExists = await _context.Categories.AnyAsync(
+            x => x.Id == dto.CategoryId,
+            cancellationToken);
         if (!categoryExists)
             return BadRequest(ApiResponse<string>.Fail("Kateqoriya tapılmadı"));
 
-        var brandExists = await _context.Brands.AnyAsync(x => x.Id == dto.BrandId);
+        var brandExists = await _context.Brands.AnyAsync(
+            x => x.Id == dto.BrandId,
+            cancellationToken);
         if (!brandExists)
             return BadRequest(ApiResponse<string>.Fail("Brend tapılmadı"));
 
         if (dto.Variants == null || !dto.Variants.Any())
             return BadRequest(ApiResponse<string>.Fail("Ən azı bir razmer/rəng/stok əlavə olunmalıdır"));
 
-        foreach (var variant in dto.Variants)
+        if (dto.Variants.Any(x => x.StockCount < 0))
         {
-            var sizeExists = await _context.Sizes.AnyAsync(x => x.Id == variant.SizeId);
-            if (!sizeExists)
-                return BadRequest(ApiResponse<string>.Fail("Razmer tapılmadı"));
+            return BadRequest(
+                ApiResponse<string>.Fail(
+                    "Stok sayı mənfi ola bilməz"));
+        }
 
-            var colorExists = await _context.Colors.AnyAsync(x => x.Id == variant.ColorId);
-            if (!colorExists)
-                return BadRequest(ApiResponse<string>.Fail("Rəng tapılmadı"));
+        var requestedSizeIds = dto.Variants
+            .Select(x => x.SizeId)
+            .Distinct()
+            .ToList();
 
-            if (variant.StockCount < 0)
-                return BadRequest(ApiResponse<string>.Fail("Stok sayı mənfi ola bilməz"));
+        var validSizeIds = await _context.Sizes
+            .AsNoTracking()
+            .Where(x => requestedSizeIds.Contains(x.Id))
+            .Select(x => x.Id)
+            .ToListAsync(cancellationToken);
+
+        if (validSizeIds.Count != requestedSizeIds.Count)
+        {
+            return BadRequest(
+                ApiResponse<string>.Fail("Razmer tapılmadı"));
+        }
+
+        var requestedColorIds = dto.Variants
+            .Select(x => x.ColorId)
+            .Distinct()
+            .ToList();
+
+        var validColorIds = await _context.Colors
+            .AsNoTracking()
+            .Where(x => requestedColorIds.Contains(x.Id))
+            .Select(x => x.Id)
+            .ToListAsync(cancellationToken);
+
+        if (validColorIds.Count != requestedColorIds.Count)
+        {
+            return BadRequest(
+                ApiResponse<string>.Fail("Rəng tapılmadı"));
         }
 
         var product = new Product
@@ -84,7 +120,7 @@ public class AdminProductsController : ControllerBase
         };
 
         _context.Products.Add(product);
-        await _context.SaveChangesAsync();
+        await _context.SaveChangesAsync(cancellationToken);
 
         await WriteAuditLogAsync(
             "Create",
@@ -96,14 +132,13 @@ public class AdminProductsController : ControllerBase
     }
 
     [HttpGet]
-    public async Task<IActionResult> GetAll()
+    public async Task<IActionResult> GetAll(
+        CancellationToken cancellationToken)
     {
         var products = await _context.Products
-            .Include(x => x.Category)
-            .Include(x => x.Brand)
-            .Include(x => x.Images)
-            .Include(x => x.Variants)
+            .AsNoTracking()
             .OrderByDescending(x => x.CreatedAt)
+            .Take(MaxAdminProductListSize)
             .Select(x => new ProductListDto
             {
                 Id = x.Id,
@@ -122,15 +157,19 @@ public class AdminProductsController : ControllerBase
                     .FirstOrDefault(),
                 TotalStock = x.Variants.Sum(v => v.StockCount)
             })
-            .ToListAsync();
+            .ToListAsync(cancellationToken);
 
         return Ok(ApiResponse<List<ProductListDto>>.Ok(products));
     }
 
     [HttpGet("{id}")]
-    public async Task<IActionResult> GetById(Guid id)
+    public async Task<IActionResult> GetById(
+        Guid id,
+        CancellationToken cancellationToken)
     {
         var product = await _context.Products
+            .AsNoTracking()
+            .AsSplitQuery()
             .Include(x => x.Category)
             .Include(x => x.Brand)
             .Include(x => x.Images)
@@ -138,7 +177,9 @@ public class AdminProductsController : ControllerBase
                 .ThenInclude(v => v.Size)
             .Include(x => x.Variants)
                 .ThenInclude(v => v.Color)
-            .FirstOrDefaultAsync(x => x.Id == id);
+            .FirstOrDefaultAsync(
+                x => x.Id == id,
+                cancellationToken);
 
         if (product == null)
             return NotFound(ApiResponse<string>.Fail("Məhsul tapılmadı"));
@@ -536,21 +577,21 @@ public class AdminProductsController : ControllerBase
     }
 
     [HttpGet("low-stock")]
-    public async Task<IActionResult> GetLowStockProducts([FromQuery] int threshold = 2)
+    public async Task<IActionResult> GetLowStockProducts(
+        [FromQuery] int threshold = 2,
+        CancellationToken cancellationToken = default)
     {
         if (threshold < 1)
             threshold = 2;
 
         var items = await _context.ProductVariants
-            .Include(x => x.Product)
-                .ThenInclude(p => p.Images)
-            .Include(x => x.Size)
-            .Include(x => x.Color)
+            .AsNoTracking()
             .Where(x =>
                 x.IsActive &&
                 x.StockCount > 0 &&
                 x.StockCount <= threshold)
             .OrderBy(x => x.StockCount)
+            .Take(MaxLowStockListSize)
             .Select(x => new LowStockProductDto
             {
                 ProductId = x.ProductId,
@@ -570,7 +611,7 @@ public class AdminProductsController : ControllerBase
                     .Select(i => i.ImageUrl)
                     .FirstOrDefault()
             })
-            .ToListAsync();
+            .ToListAsync(cancellationToken);
 
         return Ok(ApiResponse<List<LowStockProductDto>>.Ok(items));
     }

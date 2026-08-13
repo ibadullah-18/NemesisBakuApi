@@ -8,14 +8,17 @@ using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.Http.Features;
 using Microsoft.AspNetCore.HttpOverrides;
 using Microsoft.AspNetCore.Identity;
+using Microsoft.AspNetCore.OutputCaching;
 using Microsoft.AspNetCore.ResponseCompression;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.IdentityModel.Tokens;
 using Microsoft.OpenApi;
 using Microsoft.OpenApi.Models;
 using NemesisBakuApi.Data;
+using NemesisBakuApi.Data.Interceptors;
 using NemesisBakuApi.Entities;
 using NemesisBakuApi.Helpers;
+using NemesisBakuApi.HealthChecks;
 using NemesisBakuApi.Middlewares;
 using NemesisBakuApi.Services.Implementations;
 using NemesisBakuApi.Services.Interfaces;
@@ -25,22 +28,64 @@ using NemesisBakuApi.Validations;
 var builder = WebApplication.CreateBuilder(args);
 
 const long maxUploadRequestBytes =
-    200L * 1024 * 1024;
+    60L * 1024 * 1024;
+
+const long outputCacheSizeBytes =
+    25L * 1024 * 1024;
+
+const long maximumCachedResponseBytes =
+    1024L * 1024;
 
 builder.WebHost.ConfigureKestrel(options =>
 {
     options.Limits.MaxRequestBodySize =
         maxUploadRequestBytes;
+
+    options.Limits.KeepAliveTimeout =
+        TimeSpan.FromMinutes(2);
+
+    options.Limits.RequestHeadersTimeout =
+        TimeSpan.FromSeconds(20);
 });
 
 builder.Services.Configure<FormOptions>(options =>
 {
     options.MultipartBodyLengthLimit =
         maxUploadRequestBytes;
+
+    options.MemoryBufferThreshold =
+        64 * 1024;
+
+    options.ValueCountLimit = 1024;
+    options.MultipartHeadersCountLimit = 32;
+
+    options.MultipartHeadersLengthLimit =
+        16 * 1024;
 });
 
 builder.Services.AddControllers();
-builder.Services.AddHealthChecks();
+
+builder.Services.AddOutputCache(options =>
+{
+    options.SizeLimit = outputCacheSizeBytes;
+
+    options.MaximumBodySize =
+        maximumCachedResponseBytes;
+
+    options.AddPolicy(
+        ProductCacheTags.ProductListsPolicy,
+        policy => policy
+            .Expire(TimeSpan.FromSeconds(30))
+            .Tag(ProductCacheTags.Tag));
+
+    options.AddPolicy(
+        ProductCacheTags.FilterOptionsPolicy,
+        policy => policy
+            .Expire(TimeSpan.FromMinutes(5))
+            .Tag(ProductCacheTags.Tag));
+});
+builder.Services.AddHealthChecks()
+    .AddCheck<DatabaseHealthCheck>("database");
 
 builder.Services.Configure<WhatsAppSettings>(
     builder.Configuration.GetSection("WhatsApp"));
@@ -57,6 +102,14 @@ builder.Services.Configure<EmailSettings>(
 builder.Services.Configure<TelegramSettings>(
     builder.Configuration.GetSection(
         TelegramSettings.SectionName));
+
+builder.Services.Configure<AuthenticationCleanupSettings>(
+    builder.Configuration.GetSection(
+        AuthenticationCleanupSettings.SectionName));
+
+builder.Services.Configure<EmailAnnouncementWorkerSettings>(
+    builder.Configuration.GetSection(
+        EmailAnnouncementWorkerSettings.SectionName));
 
 builder.Services.AddEndpointsApiExplorer();
 
@@ -103,8 +156,11 @@ builder.Services.AddSwaggerGen(options =>
         });
 });
 
+builder.Services.AddScoped<
+    ProductCacheInvalidationInterceptor>();
+
 builder.Services.AddDbContext<AppDbContext>(
-    options =>
+    (serviceProvider, options) =>
     {
         options.UseSqlServer(
             builder.Configuration
@@ -119,6 +175,10 @@ builder.Services.AddDbContext<AppDbContext>(
                         TimeSpan.FromSeconds(10),
                     errorNumbersToAdd: null);
             });
+
+        options.AddInterceptors(
+            serviceProvider.GetRequiredService<
+                ProductCacheInvalidationInterceptor>());
     });
 
 builder.Services
@@ -185,6 +245,12 @@ builder.Services.AddHostedService<
 
 builder.Services.AddHostedService<
     TelegramWebhookSetupService>();
+
+builder.Services.AddHostedService<
+    AuthenticationDataCleanupWorker>();
+
+builder.Services.AddHostedService<
+    EmailAnnouncementWorker>();
 
 var jwtSettings =
     builder.Configuration.GetSection("Jwt");
@@ -363,6 +429,8 @@ app.UseSwaggerUI();
 app.UseHttpsRedirection();
 
 app.UseCors("CorsPolicy");
+
+app.UseOutputCache();
 
 app.UseRateLimiter();
 

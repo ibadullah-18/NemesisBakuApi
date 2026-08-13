@@ -14,6 +14,9 @@ namespace NemesisBakuApi.Controllers;
 [Route("api/[controller]")]
 public class StatsController : ControllerBase
 {
+    private static readonly TimeSpan VisitDeduplicationWindow =
+        TimeSpan.FromMinutes(30);
+
     private readonly AppDbContext _context;
 
     public StatsController(AppDbContext context)
@@ -50,21 +53,48 @@ public class StatsController : ControllerBase
                     "VisitorId boş ola bilməz"));
         }
 
+        var visitorId = LimitLength(
+            dto.VisitorId.Trim(),
+            128)!;
+
+        var pageUrl = string.IsNullOrWhiteSpace(dto.PageUrl)
+            ? null
+            : LimitLength(dto.PageUrl.Trim(), 500);
+
+        var deduplicationCutoff =
+            DateTime.UtcNow - VisitDeduplicationWindow;
+
+        var recentlyTracked = await _context.SiteVisits
+            .AsNoTracking()
+            .AnyAsync(
+                x =>
+                    x.VisitorId == visitorId &&
+                    x.PageUrl == pageUrl &&
+                    x.VisitedAt >= deduplicationCutoff,
+                cancellationToken);
+
+        if (recentlyTracked)
+        {
+            return Ok(
+                ApiResponse<string>.Ok(
+                    "Visit artıq qeydə alınıb"));
+        }
+
         var visit = new SiteVisit
         {
             UserId = GetUserIdOrNull(),
-            VisitorId = dto.VisitorId,
-            PageUrl = dto.PageUrl,
+            VisitorId = visitorId,
+            PageUrl = pageUrl,
 
-            IpAddress = HttpContext
-                .Connection
-                .RemoteIpAddress?
-                .ToString(),
+            IpAddress = LimitLength(
+                HttpContext.Connection
+                    .RemoteIpAddress?
+                    .ToString(),
+                64),
 
-            UserAgent = Request
-                .Headers
-                .UserAgent
-                .ToString(),
+            UserAgent = LimitLength(
+                Request.Headers.UserAgent.ToString(),
+                512),
 
             VisitedAt = DateTime.UtcNow
         };
@@ -238,5 +268,21 @@ public class StatsController : ControllerBase
 
         return Ok(
             ApiResponse<DashboardStatsDto>.Ok(dto));
+    }
+
+    private static string? LimitLength(
+        string? value,
+        int maxLength)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return null;
+        }
+
+        var trimmed = value.Trim();
+
+        return trimmed.Length <= maxLength
+            ? trimmed
+            : trimmed[..maxLength];
     }
 }

@@ -166,6 +166,10 @@ public class AppDbContext
         builder.Entity<PromoCode>()
             .Property(x => x.RowVersion)
             .IsRowVersion();
+
+        builder.Entity<RefreshToken>()
+            .Property(x => x.RowVersion)
+            .IsRowVersion();
     }
 
     private static void ConfigureIndexes(
@@ -294,7 +298,7 @@ public class AppDbContext
             });
 
         builder.Entity<RefreshToken>()
-            .HasIndex(x => x.Token)
+            .HasIndex(x => x.TokenHash)
             .IsUnique();
 
         builder.Entity<HomeSectionProduct>()
