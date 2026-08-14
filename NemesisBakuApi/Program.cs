@@ -65,6 +65,11 @@ builder.Services.Configure<FormOptions>(options =>
 
 builder.Services.AddControllers();
 
+builder.Services.AddMemoryCache(options =>
+{
+    options.SizeLimit = 100;
+});
+
 builder.Services.AddOutputCache(options =>
 {
     options.SizeLimit = outputCacheSizeBytes;
@@ -110,6 +115,10 @@ builder.Services.Configure<AuthenticationCleanupSettings>(
 builder.Services.Configure<EmailAnnouncementWorkerSettings>(
     builder.Configuration.GetSection(
         EmailAnnouncementWorkerSettings.SectionName));
+
+builder.Services.Configure<DatabaseCleanupSettings>(
+    builder.Configuration.GetSection(
+        DatabaseCleanupSettings.SectionName));
 
 builder.Services.AddEndpointsApiExplorer();
 
@@ -158,6 +167,21 @@ builder.Services.AddSwaggerGen(options =>
 
 builder.Services.AddScoped<
     ProductCacheInvalidationInterceptor>();
+
+builder.Services.AddScoped<
+    IDatabaseCleanupService,
+    DatabaseCleanupService>();
+
+builder.Services.AddSingleton<
+    IBasketLowStockNotificationQueue,
+    BasketLowStockNotificationQueue>();
+
+builder.Services.AddSingleton<ProductViewTracker>();
+
+builder.Services.AddSingleton<IProductViewTracker>(
+    serviceProvider =>
+        serviceProvider.GetRequiredService<
+            ProductViewTracker>());
 
 builder.Services.AddDbContext<AppDbContext>(
     (serviceProvider, options) =>
@@ -251,6 +275,17 @@ builder.Services.AddHostedService<
 
 builder.Services.AddHostedService<
     EmailAnnouncementWorker>();
+
+builder.Services.AddHostedService<
+    BasketLowStockNotificationWorker>();
+
+builder.Services.AddHostedService<
+    DatabaseCleanupWorker>();
+
+builder.Services.AddHostedService<ProductViewTracker>(
+    serviceProvider =>
+        serviceProvider.GetRequiredService<
+            ProductViewTracker>());
 
 var jwtSettings =
     builder.Configuration.GetSection("Jwt");
