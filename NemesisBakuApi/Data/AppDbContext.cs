@@ -210,6 +210,13 @@ public class AppDbContext
         builder.Entity<Product>()
             .HasIndex(x => new
             {
+                x.IsActive,
+                x.ViewCount
+            });
+
+        builder.Entity<Product>()
+            .HasIndex(x => new
+            {
                 x.CategoryId,
                 x.IsActive
             });
@@ -285,8 +292,19 @@ public class AppDbContext
         builder.Entity<SiteVisit>()
             .HasIndex(x => x.VisitedAt);
 
+        builder.Entity<SiteVisit>()
+            .HasIndex(x => new
+            {
+                x.VisitorId,
+                x.VisitedAt
+            });
+
         builder.Entity<WhatsAppClickLog>()
-            .HasIndex(x => x.ClickType);
+            .HasIndex(x => new
+            {
+                x.ClickType,
+                x.CreatedAt
+            });
 
         builder.Entity<UserOtpCode>()
             .HasIndex(x => new

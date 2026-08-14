@@ -1,5 +1,6 @@
 ﻿using Microsoft.AspNetCore.OutputCaching;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.ChangeTracking;
 using Microsoft.EntityFrameworkCore.Diagnostics;
 using NemesisBakuApi.Entities;
 using NemesisBakuApi.Helpers;
@@ -29,10 +30,7 @@ public sealed class ProductCacheInvalidationInterceptor
         InterceptionResult<int> result)
     {
         CaptureChanges(eventData.Context);
-
-        return base.SavingChanges(
-            eventData,
-            result);
+        return base.SavingChanges(eventData, result);
     }
 
     public override ValueTask<InterceptionResult<int>>
@@ -57,9 +55,7 @@ public sealed class ProductCacheInvalidationInterceptor
             .GetAwaiter()
             .GetResult();
 
-        return base.SavedChanges(
-            eventData,
-            result);
+        return base.SavedChanges(eventData, result);
     }
 
     public override async ValueTask<int> SavedChangesAsync(
@@ -79,7 +75,6 @@ public sealed class ProductCacheInvalidationInterceptor
         DbContextErrorEventData eventData)
     {
         _invalidateAfterSave = false;
-
         base.SaveChangesFailed(eventData);
     }
 
@@ -94,27 +89,46 @@ public sealed class ProductCacheInvalidationInterceptor
             cancellationToken);
     }
 
-    private void CaptureChanges(
-        DbContext? context)
+    private void CaptureChanges(DbContext? context)
     {
-        if (_invalidateAfterSave ||
-            context == null)
+        if (_invalidateAfterSave || context == null)
         {
             return;
         }
 
-        _invalidateAfterSave =
-            context.ChangeTracker
-                .Entries()
-                .Any(entry =>
-                    (entry.State == EntityState.Added ||
-                     entry.State == EntityState.Modified ||
-                     entry.State == EntityState.Deleted) &&
-                    IsProductRelated(entry.Entity));
+        _invalidateAfterSave = context.ChangeTracker
+            .Entries()
+            .Any(IsCacheRelevantChange);
     }
 
-    private static bool IsProductRelated(
-        object entity)
+    private static bool IsCacheRelevantChange(
+        EntityEntry entry)
+    {
+        if (entry.State != EntityState.Added &&
+            entry.State != EntityState.Modified &&
+            entry.State != EntityState.Deleted)
+        {
+            return false;
+        }
+
+        if (!IsProductRelated(entry.Entity))
+        {
+            return false;
+        }
+
+        if (entry.Entity is Product &&
+            entry.State == EntityState.Modified)
+        {
+            return entry.Properties.Any(property =>
+                property.IsModified &&
+                property.Metadata.Name !=
+                nameof(Product.ViewCount));
+        }
+
+        return true;
+    }
+
+    private static bool IsProductRelated(object entity)
     {
         return entity is
             Product or

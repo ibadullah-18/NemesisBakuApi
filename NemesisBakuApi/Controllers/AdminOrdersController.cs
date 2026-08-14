@@ -230,94 +230,94 @@ public class AdminOrdersController : ControllerBase
                     "Sifariş statusu düzgün deyil"));
         }
 
-        await using var transaction =
-            await _context.Database.BeginTransactionAsync(
-                cancellationToken);
-
-        Order? order = null;
-        OrderStatus oldStatus = default;
-        var stockReturnedNow = false;
+        StatusUpdateTransactionResult transactionResult;
 
         try
         {
-            order = await _context.Orders
-                .AsSplitQuery()
-                .Include(x => x.User)
-                .Include(x => x.Items)
-                .FirstOrDefaultAsync(
-                    x => x.Id == id,
-                    cancellationToken);
-
-            if (order == null)
-            {
-                return NotFound(
-                    ApiResponse<string>.Fail(
-                        "Sifariş tapılmadı"));
-            }
-
-            if (order.Status == dto.NewStatus)
-            {
-                return BadRequest(
-                    ApiResponse<string>.Fail(
-                        "Sifariş artıq bu statusdadır"));
-            }
-
-            if (!OrderStatusRules.CanTransition(
-                    order.Status,
-                    dto.NewStatus))
-            {
-                return BadRequest(
-                    ApiResponse<string>.Fail(
-                        OrderStatusRules
-                            .GetTransitionErrorMessage(
-                                order.Status,
-                                dto.NewStatus)));
-            }
-
-            oldStatus = order.Status;
-            var updatedAt = DateTime.UtcNow;
-
-            order.Status = dto.NewStatus;
-            order.UpdatedAt = updatedAt;
-
-            var shouldReturnStock =
-                OrderStatusRules.RequiresStockReturn(
-                    dto.NewStatus) &&
-                !order.StockReturned;
-
-            if (shouldReturnStock)
-            {
-                await ReturnOrderStockAsync(
-                    order,
-                    updatedAt,
-                    cancellationToken);
-
-                stockReturnedNow = true;
-            }
-
-            _context.OrderStatusHistories.Add(
-                new OrderStatusHistory
+            transactionResult = await _context
+                .ExecuteResilientTransactionAsync(
+                async transactionCancellationToken =>
                 {
-                    OrderId = order.Id,
-                    OldStatus = oldStatus,
-                    NewStatus = dto.NewStatus,
-                    ChangedByUserId = adminId,
-                    Note = string.IsNullOrWhiteSpace(dto.Note)
-                        ? null
-                        : dto.Note.Trim()
-                });
+                    var order = await _context.Orders
+                        .AsSplitQuery()
+                        .Include(x => x.User)
+                        .Include(x => x.Items)
+                        .FirstOrDefaultAsync(
+                            x => x.Id == id,
+                            transactionCancellationToken);
 
-            await _context.SaveChangesAsync(
-                cancellationToken);
+                    if (order == null)
+                    {
+                        return StatusUpdateTransactionResult.Failed(
+                            NotFound(
+                                ApiResponse<string>.Fail(
+                                    "Sifariş tapılmadı")));
+                    }
 
-            await transaction.CommitAsync(
+                    if (order.Status == dto.NewStatus)
+                    {
+                        return StatusUpdateTransactionResult.Failed(
+                            BadRequest(
+                                ApiResponse<string>.Fail(
+                                    "Sifariş artıq bu statusdadır")));
+                    }
+
+                    if (!OrderStatusRules.CanTransition(
+                            order.Status,
+                            dto.NewStatus))
+                    {
+                        return StatusUpdateTransactionResult.Failed(
+                            BadRequest(
+                                ApiResponse<string>.Fail(
+                                    OrderStatusRules
+                                        .GetTransitionErrorMessage(
+                                            order.Status,
+                                            dto.NewStatus))));
+                    }
+
+                    var oldStatus = order.Status;
+                    var updatedAt = DateTime.UtcNow;
+
+                    order.Status = dto.NewStatus;
+                    order.UpdatedAt = updatedAt;
+
+                    var stockReturnedNow =
+                        OrderStatusRules.RequiresStockReturn(
+                            dto.NewStatus) &&
+                        !order.StockReturned;
+
+                    if (stockReturnedNow)
+                    {
+                        await ReturnOrderStockAsync(
+                            order,
+                            updatedAt,
+                            transactionCancellationToken);
+                    }
+
+                    _context.OrderStatusHistories.Add(
+                        new OrderStatusHistory
+                        {
+                            OrderId = order.Id,
+                            OldStatus = oldStatus,
+                            NewStatus = dto.NewStatus,
+                            ChangedByUserId = adminId,
+                            Note = string.IsNullOrWhiteSpace(dto.Note)
+                                ? null
+                                : dto.Note.Trim()
+                        });
+
+                    await _context.SaveChangesAsync(
+                        transactionCancellationToken);
+
+                    return StatusUpdateTransactionResult.Succeeded(
+                        order,
+                        oldStatus,
+                        stockReturnedNow);
+                },
                 cancellationToken);
         }
         catch (DbUpdateConcurrencyException exception)
         {
-            await transaction.RollbackAsync(
-                CancellationToken.None);
-
             _logger.LogWarning(
                 exception,
                 "Sifariş statusunda concurrency problemi. OrderId: {OrderId}",
@@ -327,13 +327,16 @@ public class AdminOrdersController : ControllerBase
                 ApiResponse<string>.Fail(
                     "Sifariş və ya stok məlumatı başqa əməliyyat tərəfindən dəyişdirildi. Səhifəni yeniləyib təkrar yoxlayın"));
         }
-        catch
-        {
-            await transaction.RollbackAsync(
-                CancellationToken.None);
 
-            throw;
+        if (transactionResult.ErrorResult != null)
+        {
+            return transactionResult.ErrorResult;
         }
+
+        var order = transactionResult.Order!;
+        var oldStatus = transactionResult.OldStatus;
+        var stockReturnedNow =
+            transactionResult.StockReturnedNow;
 
         await WriteAuditLogSafelyAsync(
             adminId,
@@ -513,6 +516,27 @@ public class AdminOrdersController : ControllerBase
 
         order.StockReturned = true;
         order.StockReturnedAt = updatedAt;
+    }
+
+    private sealed record StatusUpdateTransactionResult(
+        IActionResult? ErrorResult,
+        Order? Order,
+        OrderStatus OldStatus,
+        bool StockReturnedNow)
+    {
+        public static StatusUpdateTransactionResult Failed(
+            IActionResult errorResult) =>
+            new(errorResult, null, default, false);
+
+        public static StatusUpdateTransactionResult Succeeded(
+            Order order,
+            OrderStatus oldStatus,
+            bool stockReturnedNow) =>
+            new(
+                null,
+                order,
+                oldStatus,
+                stockReturnedNow);
     }
 
     private async Task WriteAuditLogSafelyAsync(

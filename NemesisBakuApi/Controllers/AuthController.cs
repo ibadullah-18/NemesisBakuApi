@@ -87,10 +87,9 @@ public class AuthController : ControllerBase
             return BadRequest(updateResult.Errors);
         }
 
-        var response =
-            await CreateAuthResponseAsync(
-                user,
-                cancellationToken);
+        var response = await CreateAuthResponseAsync(
+            user,
+            cancellationToken);
 
         return Ok(
             ApiResponse<AuthResponseDto>.Ok(response));
@@ -259,6 +258,8 @@ public class AuthController : ControllerBase
             user.IsDeleted ||
             !user.IsActive)
         {
+            // Email-in sistemdə olub-olmadığını
+            // kənar şəxslərə göstərmirik.
             return Ok(
                 ApiResponse<string>.Ok(
                     "Email sistemdə mövcuddursa, " +
@@ -336,79 +337,103 @@ public class AuthController : ControllerBase
         RefreshTokenDto dto,
         CancellationToken cancellationToken)
     {
-        await using var transaction =
-            await _context.Database
-                .BeginTransactionAsync(
-                    cancellationToken);
+        var tokenHash =
+            RefreshTokenGenerator.Hash(
+                dto.RefreshToken);
+
+        var replacementRawToken =
+            RefreshTokenGenerator.Generate();
+
+        var replacementTokenHash =
+            RefreshTokenGenerator.Hash(
+                replacementRawToken);
 
         try
         {
-            var tokenHash =
-                RefreshTokenGenerator.Hash(
-                    dto.RefreshToken);
+            return await _context
+                .ExecuteResilientTransactionAsync<IActionResult>(
+                async transactionCancellationToken =>
+                {
+                    var existingReplacement =
+                        await _context.RefreshTokens
+                            .Include(x => x.User)
+                            .FirstOrDefaultAsync(
+                                x =>
+                                    x.TokenHash ==
+                                    replacementTokenHash,
+                                transactionCancellationToken);
 
-            var refreshToken =
-                await _context.RefreshTokens
-                    .Include(x => x.User)
-                    .FirstOrDefaultAsync(
-                        x =>
-                            x.TokenHash == tokenHash &&
-                            !x.IsRevoked &&
-                            !x.IsUsed &&
-                            x.ExpiresAt >
-                                DateTime.UtcNow,
-                        cancellationToken);
+                    if (existingReplacement != null &&
+                        existingReplacement.User != null &&
+                        existingReplacement.User.IsActive &&
+                        !existingReplacement.User.IsDeleted)
+                    {
+                        var existingResponse =
+                            await BuildAuthResponseAsync(
+                                existingReplacement.User,
+                                replacementRawToken);
 
-            if (refreshToken == null)
-            {
-                return InvalidRefreshToken();
-            }
+                        return Ok(
+                            ApiResponse<AuthResponseDto>.Ok(
+                                existingResponse));
+                    }
 
-            var user = refreshToken.User;
+                    var refreshToken =
+                        await _context.RefreshTokens
+                            .Include(x => x.User)
+                            .FirstOrDefaultAsync(
+                                x => x.TokenHash == tokenHash,
+                                transactionCancellationToken);
 
-            if (user == null ||
-                !user.IsActive ||
-                user.IsDeleted)
-            {
-                refreshToken.IsRevoked = true;
-                refreshToken.RevokedAt =
-                    DateTime.UtcNow;
+                    if (refreshToken == null)
+                    {
+                        return InvalidRefreshToken();
+                    }
 
-                await _context.SaveChangesAsync(
-                    cancellationToken);
+                    var user = refreshToken.User;
 
-                await transaction.CommitAsync(
-                    cancellationToken);
+                    if (user == null ||
+                        !user.IsActive ||
+                        user.IsDeleted)
+                    {
+                        refreshToken.IsRevoked = true;
+                        refreshToken.RevokedAt = DateTime.UtcNow;
 
-                return Unauthorized(
-                    ApiResponse<string>.Fail(
-                        "Hesab aktiv deyil"));
-            }
+                        await _context.SaveChangesAsync(
+                            transactionCancellationToken);
 
-            refreshToken.IsUsed = true;
-            refreshToken.UsedAt = DateTime.UtcNow;
+                        return Unauthorized(
+                            ApiResponse<string>.Fail(
+                                "Hesab aktiv deyil"));
+                    }
 
-            var response =
-                await CreateAuthResponseAsync(
-                    user,
-                    cancellationToken,
-                    saveChanges: false);
+                    if (refreshToken.IsRevoked ||
+                        refreshToken.IsUsed ||
+                        refreshToken.ExpiresAt <= DateTime.UtcNow)
+                    {
+                        return InvalidRefreshToken();
+                    }
 
-            await _context.SaveChangesAsync(
+                    refreshToken.IsUsed = true;
+                    refreshToken.UsedAt = DateTime.UtcNow;
+
+                    var response = await CreateAuthResponseAsync(
+                        user,
+                        transactionCancellationToken,
+                        saveChanges: false,
+                        rawRefreshToken:
+                            replacementRawToken);
+
+                    await _context.SaveChangesAsync(
+                        transactionCancellationToken);
+
+                    return Ok(
+                        ApiResponse<AuthResponseDto>.Ok(response));
+                },
                 cancellationToken);
-
-            await transaction.CommitAsync(
-                cancellationToken);
-
-            return Ok(
-                ApiResponse<AuthResponseDto>
-                    .Ok(response));
         }
         catch (DbUpdateConcurrencyException)
         {
-            await transaction.RollbackAsync(
-                CancellationToken.None);
-
             _context.ChangeTracker.Clear();
 
             return InvalidRefreshToken();
@@ -419,13 +444,10 @@ public class AuthController : ControllerBase
         CreateAuthResponseAsync(
             AppUser user,
             CancellationToken cancellationToken,
-            bool saveChanges = true)
+            bool saveChanges = true,
+            string? rawRefreshToken = null)
     {
-        var accessToken =
-            await _jwtTokenGenerator
-                .GenerateTokenAsync(user);
-
-        var rawRefreshToken =
+        rawRefreshToken ??=
             RefreshTokenGenerator.Generate();
 
         var refreshToken = new RefreshToken
@@ -447,6 +469,20 @@ public class AuthController : ControllerBase
             await _context.SaveChangesAsync(
                 cancellationToken);
         }
+
+        return await BuildAuthResponseAsync(
+            user,
+            rawRefreshToken);
+    }
+
+    private async Task<AuthResponseDto>
+        BuildAuthResponseAsync(
+            AppUser user,
+            string rawRefreshToken)
+    {
+        var accessToken =
+            await _jwtTokenGenerator
+                .GenerateTokenAsync(user);
 
         var roles =
             await _userManager.GetRolesAsync(user);
@@ -499,10 +535,9 @@ public class AuthController : ControllerBase
         await _context.SaveChangesAsync(
             cancellationToken);
 
-        var sent =
-            await _emailService.SendOtpAsync(
-                recipientEmail,
-                code);
+        var sent = await _emailService.SendOtpAsync(
+            recipientEmail,
+            code);
 
         if (!sent)
         {
@@ -596,8 +631,6 @@ public class AuthController : ControllerBase
             Guid userId,
             CancellationToken cancellationToken)
     {
-        var now = DateTime.UtcNow;
-
         await _context.RefreshTokens
             .Where(x =>
                 x.UserId == userId &&
@@ -610,10 +643,10 @@ public class AuthController : ControllerBase
                         true)
                     .SetProperty(
                         x => x.RevokedAt,
-                        now)
+                        DateTime.UtcNow)
                     .SetProperty(
                         x => x.UpdatedAt,
-                        now),
+                        DateTime.UtcNow),
                 cancellationToken);
     }
 
