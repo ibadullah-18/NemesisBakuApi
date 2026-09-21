@@ -172,67 +172,80 @@ public class OrdersController : ControllerBase
             dto.Apartment = null;
         }
 
-        await using var transaction =
-            await _context.Database.BeginTransactionAsync(cancellationToken);
-
         try
         {
-            var basketItems = await _context.BasketItems
-                .AsSplitQuery()
-                .Include(x => x.Product)
-                    .ThenInclude(x => x.Images)
-                .Include(x => x.ProductVariant)
-                    .ThenInclude(x => x.Size)
-                .Include(x => x.ProductVariant)
-                    .ThenInclude(x => x.Color)
-                .Where(x =>
-                    x.UserId == userId &&
-                    basketItemIds.Contains(x.Id))
-                .ToListAsync(cancellationToken);
+            return await _context
+                .ExecuteResilientTransactionAsync<IActionResult>(
+                async _ =>
+                {
+                var basketItems = await _context.BasketItems
+                    .AsSplitQuery()
+                    .Include(x => x.Product)
+                        .ThenInclude(x => x.Images)
+                    .Include(x => x.ProductVariant)
+                        .ThenInclude(x => x.Size)
+                    .Include(x => x.ProductVariant)
+                        .ThenInclude(x => x.Color)
+                    .Where(x =>
+                        x.UserId == userId &&
+                        basketItemIds.Contains(x.Id))
+                    .ToListAsync(cancellationToken);
 
-            if (basketItems.Count != basketItemIds.Count)
-            {
-                return BadRequest(
-                    ApiResponse<string>.Fail(
-                        "Səbətdə seçilmiş məhsullardan biri tapılmadı"));
-            }
-
-            foreach (var basketItem in basketItems)
-            {
-                if (!basketItem.Product.IsActive)
+                if (basketItems.Count != basketItemIds.Count)
                 {
                     return BadRequest(
                         ApiResponse<string>.Fail(
-                            $"{basketItem.Product.Name} aktiv deyil"));
+                            "Səbətdə seçilmiş məhsullardan biri tapılmadı"));
                 }
 
-                if (!basketItem.ProductVariant.IsActive)
+                foreach (var basketItem in basketItems)
                 {
-                    return BadRequest(
-                        ApiResponse<string>.Fail(
-                            $"{basketItem.Product.Name} üçün seçilmiş razmer/rəng aktiv deyil"));
+                    // Global query filters may hide a soft-deleted related
+                    // product/variant while the basket row still exists.
+                    if (basketItem.Product is null ||
+                        basketItem.ProductVariant is null ||
+                        basketItem.ProductVariant.Size is null ||
+                        basketItem.ProductVariant.Color is null)
+                    {
+                        return BadRequest(
+                            ApiResponse<string>.Fail(
+                                "Səbətdə artıq mövcud olmayan məhsul var. Səbəti yeniləyin"));
+                    }
+
+                    if (!basketItem.Product.IsActive)
+                    {
+                        return BadRequest(
+                            ApiResponse<string>.Fail(
+                                $"{basketItem.Product.Name} aktiv deyil"));
+                    }
+
+                    if (!basketItem.ProductVariant.IsActive)
+                    {
+                        return BadRequest(
+                            ApiResponse<string>.Fail(
+                                $"{basketItem.Product.Name} üçün seçilmiş razmer/rəng aktiv deyil"));
+                    }
+
+                    if (basketItem.Quantity <= 0)
+                    {
+                        return BadRequest(
+                            ApiResponse<string>.Fail(
+                                $"{basketItem.Product.Name} üçün say düzgün deyil"));
+                    }
+
+                    if (basketItem.ProductVariant.StockCount <
+                        basketItem.Quantity)
+                    {
+                        return BadRequest(
+                            ApiResponse<string>.Fail(
+                                $"{basketItem.Product.Name} üçün stok kifayət deyil"));
+                    }
                 }
 
-                if (basketItem.Quantity <= 0)
+                decimal totalProductPrice = 0;
+
+                var order = new Order
                 {
-                    return BadRequest(
-                        ApiResponse<string>.Fail(
-                            $"{basketItem.Product.Name} üçün say düzgün deyil"));
-                }
-
-                if (basketItem.ProductVariant.StockCount <
-                    basketItem.Quantity)
-                {
-                    return BadRequest(
-                        ApiResponse<string>.Fail(
-                            $"{basketItem.Product.Name} üçün stok kifayət deyil"));
-                }
-            }
-
-            decimal totalProductPrice = 0;
-
-            var order = new Order
-            {
                 UserId = userId,
                 OrderNumber = OrderNumberGenerator.Generate(),
 
@@ -258,10 +271,10 @@ public class OrdersController : ControllerBase
 
                 Note = dto.Note?.Trim(),
                 Status = OrderStatus.Pending
-            };
+                };
 
-            foreach (var basketItem in basketItems)
-            {
+                foreach (var basketItem in basketItems)
+                {
                 var product = basketItem.Product;
                 var variant = basketItem.ProductVariant;
 
@@ -307,12 +320,12 @@ public class OrdersController : ControllerBase
 
                 basketItem.IsDeleted = true;
                 basketItem.UpdatedAt = DateTime.UtcNow;
-            }
+                }
 
-            decimal promoDiscountAmount = 0;
+                decimal promoDiscountAmount = 0;
 
-            if (!string.IsNullOrWhiteSpace(dto.PromoCode))
-            {
+                if (!string.IsNullOrWhiteSpace(dto.PromoCode))
+                {
                 var now = DateTime.UtcNow;
                 var normalizedCode = dto.PromoCode.Trim().ToUpperInvariant();
 
@@ -368,22 +381,22 @@ public class OrdersController : ControllerBase
                     Order = order,
                     DiscountAmount = promoDiscountAmount
                 });
-            }
+                }
 
-            order.TotalProductPrice = totalProductPrice;
-            order.PromoDiscountAmount = promoDiscountAmount;
-            order.TotalPrice =
-                totalProductPrice -
-                promoDiscountAmount +
-                order.DeliveryPrice;
+                order.TotalProductPrice = totalProductPrice;
+                order.PromoDiscountAmount = promoDiscountAmount;
+                order.TotalPrice =
+                    totalProductPrice -
+                    promoDiscountAmount +
+                    order.DeliveryPrice;
 
-            if (dto.DeliveryType == DeliveryType.HomeDelivery &&
-                dto.SaveAddressToProfile &&
-                !dto.SavedAddressId.HasValue &&
-                !string.IsNullOrWhiteSpace(dto.AddressText) &&
-                dto.Latitude.HasValue &&
-                dto.Longitude.HasValue)
-            {
+                if (dto.DeliveryType == DeliveryType.HomeDelivery &&
+                    dto.SaveAddressToProfile &&
+                    !dto.SavedAddressId.HasValue &&
+                    !string.IsNullOrWhiteSpace(dto.AddressText) &&
+                    dto.Latitude.HasValue &&
+                    dto.Longitude.HasValue)
+                {
                 var address = new UserAddress
                 {
                     UserId = userId,
@@ -403,35 +416,29 @@ public class OrdersController : ControllerBase
                     IsDefault = false
                 };
 
-                _context.UserAddresses.Add(address);
-            }
+                    _context.UserAddresses.Add(address);
+                }
 
-            _context.Orders.Add(order);
+                _context.Orders.Add(order);
 
-            await _telegramOutbox.EnqueueAsync(
-                order,
+                await _telegramOutbox.EnqueueAsync(
+                    order,
+                    cancellationToken);
+
+                await _context.SaveChangesAsync(cancellationToken);
+
+                return Ok(
+                    ApiResponse<Guid>.Ok(
+                        order.Id,
+                        "Sifariş uğurla yaradıldı"));
+                },
                 cancellationToken);
-
-            await _context.SaveChangesAsync(cancellationToken);
-            await transaction.CommitAsync(cancellationToken);
-
-            return Ok(
-                ApiResponse<Guid>.Ok(
-                    order.Id,
-                    "Sifariş uğurla yaradıldı"));
         }
         catch (DbUpdateConcurrencyException)
         {
-            await transaction.RollbackAsync(cancellationToken);
-
             return Conflict(
                 ApiResponse<string>.Fail(
                     "Stok və ya promo kod məlumatı dəyişdi. Səbəti yeniləyib yenidən yoxlayın"));
-        }
-        catch
-        {
-            await transaction.RollbackAsync(cancellationToken);
-            throw;
         }
     }
 

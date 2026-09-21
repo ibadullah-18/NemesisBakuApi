@@ -485,6 +485,8 @@ using (var scope = app.Services.CreateScope())
     await db.Database.MigrateAsync();
 
     await DbSeeder.SeedRolesAsync(services);
+
+    await DbSeeder.SeedStoreInfoAsync(services);
 }
 
 app.Run();

@@ -198,4 +198,37 @@ public static class DbSeeder
 
         Console.WriteLine("SUPER ADMIN UPDATED SUCCESSFULLY");
     }
+
+    public static async Task SeedStoreInfoAsync(
+    IServiceProvider serviceProvider)
+    {
+        var dbContext =
+            serviceProvider.GetRequiredService<AppDbContext>();
+
+        var storeInfoExists = await dbContext.StoreInfos
+            .AnyAsync();
+
+        if (storeInfoExists)
+            return;
+
+        var storeInfo = new StoreInfo
+        {
+            StoreName = "nemesisbaku",
+            Slogan = "Addımlarınızda premium stil",
+
+            PhoneNumber = "994514349829",
+            WhatsAppNumber = "994514349829",
+
+            WorkingHours = "Hər gün | 10:00 – 21:00",
+
+            IsActive = true,
+            IsDeleted = false
+        };
+
+        dbContext.StoreInfos.Add(storeInfo);
+        await dbContext.SaveChangesAsync();
+
+        Console.WriteLine(
+            "nemesisbaku STORE INFO CREATED SUCCESSFULLY");
+    }
 }

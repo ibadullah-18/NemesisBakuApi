@@ -2,7 +2,7 @@
 
 public class StoreInfo : BaseEntity
 {
-    public string StoreName { get; set; } = "NemesisBaku";
+    public string StoreName { get; set; } = "nemesisbaku";
     public string? Slogan { get; set; }
 
     public string? LogoUrl { get; set; }
