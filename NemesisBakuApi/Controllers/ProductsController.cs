@@ -163,7 +163,7 @@ public class ProductsController : ControllerBase
                 .OrderByDescending(x => x.IsFeatured)
                 .ThenByDescending(x => x.CreatedAt),
 
-            _ => query.OrderByDescending(x => x.CreatedAt)
+            _ => query.OrderByDescending(x => x.CreatedAt).ThenBy(x => x.Id)
         };
 
         var products = await query

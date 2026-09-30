@@ -49,6 +49,9 @@ public class AppDbContext
     public DbSet<UserAddress> UserAddresses { get; set; }
 
     public DbSet<PromoPage> PromoPages { get; set; }
+    public DbSet<ShowcaseGroup> ShowcaseGroups => Set<ShowcaseGroup>();
+    public DbSet<ShowcaseBlock> ShowcaseBlocks => Set<ShowcaseBlock>();
+    public DbSet<ShowcaseBlockProduct> ShowcaseBlockProducts => Set<ShowcaseBlockProduct>();
     public DbSet<PromoPageProduct> PromoPageProducts { get; set; }
 
     public DbSet<HomeSection> HomeSections { get; set; }
@@ -68,6 +71,21 @@ public class AppDbContext
         ModelBuilder builder)
     {
         base.OnModelCreating(builder);
+
+        builder.Entity<ShowcaseGroup>().HasQueryFilter(x => !x.IsDeleted);
+        builder.Entity<ShowcaseGroup>().HasIndex(x => new { x.DisplayOrder, x.CreatedAt });
+        builder.Entity<ShowcaseBlock>().HasQueryFilter(x => !x.IsDeleted && !x.Group.IsDeleted);
+        builder.Entity<ShowcaseBlock>().HasIndex(x => x.Slug).IsUnique()
+            .HasFilter("[Slug] IS NOT NULL");
+        builder.Entity<ShowcaseBlock>().HasOne(x => x.Group).WithMany(x => x.Blocks)
+            .HasForeignKey(x => x.ShowcaseGroupId).OnDelete(DeleteBehavior.Cascade);
+        builder.Entity<ShowcaseBlockProduct>().HasKey(x => new { x.ShowcaseBlockId, x.ProductId });
+        builder.Entity<ShowcaseBlockProduct>().HasOne(x => x.Block).WithMany(x => x.Products)
+            .HasForeignKey(x => x.ShowcaseBlockId).OnDelete(DeleteBehavior.Cascade);
+        builder.Entity<ShowcaseBlockProduct>().HasOne(x => x.Product).WithMany()
+            .HasForeignKey(x => x.ProductId).OnDelete(DeleteBehavior.Restrict);
+        builder.Entity<ShowcaseBlockProduct>().HasQueryFilter(x =>
+            !x.Block.IsDeleted && !x.Block.Group.IsDeleted && !x.Product.IsDeleted);
 
         ConfigureDecimalProperties(builder);
         ConfigureConcurrency(builder);
