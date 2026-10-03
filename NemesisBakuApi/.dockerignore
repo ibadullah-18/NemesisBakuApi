@@ -8,3 +8,13 @@ docker-compose*.yml
 appsettings.Development.json
 *.user
 *.suo
+# Keep private deployment files out of image build contexts
+.env*
+**/.env*
+appsettings.Production.json
+secrets.json
+google-services.json
+service-account*.json
+*.pem
+*.key
+certbot/
