@@ -232,6 +232,8 @@ builder.Services
 
 builder.Services.AddScoped<JwtTokenGenerator>();
 builder.Services.AddScoped<NemesisBakuApi.Services.Implementations.DeliveryPricingService>();
+builder.Services.Configure<NemesisBakuApi.Settings.RoadRoutingSettings>(builder.Configuration.GetSection("RoadRouting"));
+builder.Services.AddHttpClient<NemesisBakuApi.Services.Interfaces.IRoadDistanceService, NemesisBakuApi.Services.Implementations.OsrmRoadDistanceService>().ConfigurePrimaryHttpMessageHandler(() => new HttpClientHandler { AllowAutoRedirect = false });
 builder.Services.AddSingleton<OtpCodeHasher>();
 
 builder.Services.AddScoped<

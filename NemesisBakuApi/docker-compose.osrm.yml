@@ -1,0 +1,21 @@
+services:
+  osrm:
+    image: ghcr.io/project-osrm/osrm-backend:v26.10.0
+    command: [osrm-routed, --algorithm, ch, --threads, '2', --max-table-size, '100', /data/azerbaijan-latest.osrm]
+    volumes:
+      - ${OSRM_DATA_DIR:?Set OSRM_DATA_DIR to the prepared absolute dataset directory}:/data:ro
+    expose:
+      - '5000'
+    restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+  api:
+    environment:
+      RoadRouting__BaseUrl: http://osrm:5000
+      RoadRouting__TimeoutSeconds: '10'
+      RoadRouting__MaxSnapDistanceMeters: '100'
+    depends_on:
+      osrm:
+        condition: service_started

@@ -156,6 +156,7 @@ public class OrdersController : ControllerBase
             }, cancellationToken);
         }
         catch (ArgumentException ex) { return BadRequest(ApiResponse<string>.Fail(ex.Message)); }
+        catch (RoadRoutingException ex) { return StatusCode(503, ApiResponse<string>.Fail(ex.Message)); }
 
         if (dto.DeliveryType == DeliveryType.MetroPickup)
         {
@@ -559,5 +560,6 @@ public class OrdersController : ControllerBase
         {
             return BadRequest(ApiResponse<string>.Fail(ex.Message));
         }
+        catch (RoadRoutingException ex) { return StatusCode(503, ApiResponse<string>.Fail(ex.Message)); }
     }
 }

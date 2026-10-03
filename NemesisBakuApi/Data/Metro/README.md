@@ -13,11 +13,11 @@ götürür; tam ədəd mikro-dərəcələr 1 000 000-a bölünür. CSV-də tarix
 Memar Əcəmi və Memar Əcəmi 2 ayrıca stansiyalardır.
 
 Mənbə koordinatları təxmini çıxış nöqtələri kimi təsvir edir. Bunlar yol marşrutu
-deyil. Tarif stansiyanın saxlanmış nöqtəsinə düz xətt məsafəsinə əsaslanır.
+deyil. Tarif stansiyanın saxlanmış nöqtəsindən OSRM avtomobil yolu məsafəsinə əsaslanır. Qoşulma üçün ROAD_ROUTING.md sənədinə baxın.
 Admin koordinatı, adı, ünvanı və aktivliyi dəyişə bilər. Migration ilkin məlumatı
 bir dəfə əlavə edir; tətbiqin yenidən başlaması admin dəyişikliklərini əvəz etmir.
 
-0–1 km (1 daxil) = 6 AZN; 1–2 km (2 daxil) = 7 AZN; >2 km = əvvəlki mağaza
+0–1 km (1 daxil) = 6 AZN; 1–2 km (2 daxil) = 7 AZN; >2 km = mağazadan yol məsafəsi ilə mövcud
 kilometraj qaydası. Müqayisə yuvarlaqlaşdırılmamış məsafə ilə edilir. Aktiv metro
 qalmasa ünvan çatdırılması mağaza qaydasına keçir, metroda təhvil isə mümkün olmur.
 Metroda təhvil yalnız seçilmiş aktiv stansiya üçün 4 AZN-dir. Mağazadan götürmə 0 AZN.
