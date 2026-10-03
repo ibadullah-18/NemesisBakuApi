@@ -1,0 +1,40 @@
+using NemesisBakuApi.Entities;
+
+namespace NemesisBakuApi.Data;
+
+public static class MetroStationSeed
+{
+    private static readonly DateTime SeedDate = new(2026, 10, 3, 0, 0, 0, DateTimeKind.Utc);
+    // Official IDDA dataset: first exit of each station, microdegrees / 1,000,000.
+    // Source Excel date normalized to 28 May.
+    public static readonly MetroStation[] Stations =
+    [
+        new() { Id = new Guid("c8012026-1003-4000-8000-000000000001"), Version = new Guid("c8012026-1003-4000-8000-000000000001"), Name = "20 Yanvar", Latitude = 40.403402m, Longitude = 49.807583m, Address = "Zərdabi prospekti — Çıxış 1", IsActive = true, CreatedAt = SeedDate },
+        new() { Id = new Guid("c8012026-1003-4000-8000-000000000002"), Version = new Guid("c8012026-1003-4000-8000-000000000002"), Name = "28 May", Latitude = 40.379712m, Longitude = 49.848843m, Address = "Dilarə Əliyeva küçəsi — Çıxış 1", IsActive = true, CreatedAt = SeedDate },
+        new() { Id = new Guid("c8012026-1003-4000-8000-000000000003"), Version = new Guid("c8012026-1003-4000-8000-000000000003"), Name = "8 Noyabr", Latitude = 40.402263m, Longitude = 49.819552m, Address = "Ceyhun Səlimov küçəsi — Çıxış 1", IsActive = true, CreatedAt = SeedDate },
+        new() { Id = new Guid("c8012026-1003-4000-8000-000000000004"), Version = new Guid("c8012026-1003-4000-8000-000000000004"), Name = "Avtovağzal", Latitude = 40.42176m, Longitude = 49.796061m, Address = "Bakı Sumqayıt yolu — Çıxış 1", IsActive = true, CreatedAt = SeedDate },
+        new() { Id = new Guid("c8012026-1003-4000-8000-000000000005"), Version = new Guid("c8012026-1003-4000-8000-000000000005"), Name = "Azadlıq prospekti", Latitude = 40.425958m, Longitude = 49.842833m, Address = "Süleyman sani Axundov küçəsi — Çıxış 1", IsActive = true, CreatedAt = SeedDate },
+        new() { Id = new Guid("c8012026-1003-4000-8000-000000000006"), Version = new Guid("c8012026-1003-4000-8000-000000000006"), Name = "Bakmil", Latitude = 40.414152m, Longitude = 49.879007m, Address = "Ələsgər Qayıbov küçəsi — Çıxış 1", IsActive = true, CreatedAt = SeedDate },
+        new() { Id = new Guid("c8012026-1003-4000-8000-000000000007"), Version = new Guid("c8012026-1003-4000-8000-000000000007"), Name = "Cəfər Cabbarlı", Latitude = 40.379585m, Longitude = 49.848716m, Address = "Dilarə Əliyeva küçəsi — Çıxış 1", IsActive = true, CreatedAt = SeedDate },
+        new() { Id = new Guid("c8012026-1003-4000-8000-000000000008"), Version = new Guid("c8012026-1003-4000-8000-000000000008"), Name = "Dərnəgül", Latitude = 40.424955m, Longitude = 49.860638m, Address = "Süleyman sani Axundov küçəsi — Çıxış 1", IsActive = true, CreatedAt = SeedDate },
+        new() { Id = new Guid("c8012026-1003-4000-8000-000000000009"), Version = new Guid("c8012026-1003-4000-8000-000000000009"), Name = "Elmlər Akademiyası", Latitude = 40.375083m, Longitude = 49.812417m, Address = "Bəxtiyar Vahabzadə küçəsi — Çıxış 1", IsActive = true, CreatedAt = SeedDate },
+        new() { Id = new Guid("c8012026-1003-4000-8000-000000000010"), Version = new Guid("c8012026-1003-4000-8000-000000000010"), Name = "Əhmədli", Latitude = 40.385988m, Longitude = 49.953697m, Address = "Məhəmməd Hadi küçəsi — Çıxış 1", IsActive = true, CreatedAt = SeedDate },
+        new() { Id = new Guid("c8012026-1003-4000-8000-000000000011"), Version = new Guid("c8012026-1003-4000-8000-000000000011"), Name = "Gənclik", Latitude = 40.400468m, Longitude = 49.850587m, Address = "Fətəli xan Xoyski küçəsi — Çıxış 1", IsActive = true, CreatedAt = SeedDate },
+        new() { Id = new Guid("c8012026-1003-4000-8000-000000000012"), Version = new Guid("c8012026-1003-4000-8000-000000000012"), Name = "Həzi Aslanov", Latitude = 40.373863m, Longitude = 49.953849m, Address = "Məhəmməd Hadi küçəsi — Çıxış 1", IsActive = true, CreatedAt = SeedDate },
+        new() { Id = new Guid("c8012026-1003-4000-8000-000000000013"), Version = new Guid("c8012026-1003-4000-8000-000000000013"), Name = "İçərişəhər", Latitude = 40.365899m, Longitude = 49.831529m, Address = "İstiqlaliyyət küçəsi — Çıxış 1", IsActive = true, CreatedAt = SeedDate },
+        new() { Id = new Guid("c8012026-1003-4000-8000-000000000014"), Version = new Guid("c8012026-1003-4000-8000-000000000014"), Name = "İnşaatçılar", Latitude = 40.391379m, Longitude = 49.802764m, Address = "Şərifzadə küçəsi — Çıxış 1", IsActive = true, CreatedAt = SeedDate },
+        new() { Id = new Guid("c8012026-1003-4000-8000-000000000015"), Version = new Guid("c8012026-1003-4000-8000-000000000015"), Name = "Koroğlu", Latitude = 40.419433m, Longitude = 49.919821m, Address = "Heydər Əliyev prospekti — Çıxış 1", IsActive = true, CreatedAt = SeedDate },
+        new() { Id = new Guid("c8012026-1003-4000-8000-000000000016"), Version = new Guid("c8012026-1003-4000-8000-000000000016"), Name = "Memar Əcəmi", Latitude = 40.412073m, Longitude = 49.815008m, Address = "Cavadxan küçəsi — Çıxış 1", IsActive = true, CreatedAt = SeedDate },
+        new() { Id = new Guid("c8012026-1003-4000-8000-000000000017"), Version = new Guid("c8012026-1003-4000-8000-000000000017"), Name = "Memar Əcəmi 2", Latitude = 40.410365m, Longitude = 49.811939m, Address = "Cavadxan küçəsi — Çıxış 1", IsActive = true, CreatedAt = SeedDate },
+        new() { Id = new Guid("c8012026-1003-4000-8000-000000000018"), Version = new Guid("c8012026-1003-4000-8000-000000000018"), Name = "Neftçilər", Latitude = 40.411849m, Longitude = 49.942465m, Address = "Qara Qarayev prospekti — Çıxış 1", IsActive = true, CreatedAt = SeedDate },
+        new() { Id = new Guid("c8012026-1003-4000-8000-000000000019"), Version = new Guid("c8012026-1003-4000-8000-000000000019"), Name = "Nəriman Nərimanov", Latitude = 40.40254m, Longitude = 49.868876m, Address = "Əhməd Rəcəbli küçəsi — Çıxış 1", IsActive = true, CreatedAt = SeedDate },
+        new() { Id = new Guid("c8012026-1003-4000-8000-000000000020"), Version = new Guid("c8012026-1003-4000-8000-000000000020"), Name = "Nəsimi", Latitude = 40.424112m, Longitude = 49.824204m, Address = "Svetlana Məmmədova küçəsi — Çıxış 1", IsActive = true, CreatedAt = SeedDate },
+        new() { Id = new Guid("c8012026-1003-4000-8000-000000000021"), Version = new Guid("c8012026-1003-4000-8000-000000000021"), Name = "Nizami", Latitude = 40.37919m, Longitude = 49.830063m, Address = "Cəfər Cabbarlı küçəsi — Çıxış 1", IsActive = true, CreatedAt = SeedDate },
+        new() { Id = new Guid("c8012026-1003-4000-8000-000000000022"), Version = new Guid("c8012026-1003-4000-8000-000000000022"), Name = "Qara Qarayev", Latitude = 40.417506m, Longitude = 49.93554m, Address = "Qara Qarayev prospekti — Çıxış 1", IsActive = true, CreatedAt = SeedDate },
+        new() { Id = new Guid("c8012026-1003-4000-8000-000000000023"), Version = new Guid("c8012026-1003-4000-8000-000000000023"), Name = "Şah İsmayıl Xətai", Latitude = 40.383066m, Longitude = 49.871971m, Address = "Xocalı prospekti — Çıxış 1", IsActive = true, CreatedAt = SeedDate },
+        new() { Id = new Guid("c8012026-1003-4000-8000-000000000024"), Version = new Guid("c8012026-1003-4000-8000-000000000024"), Name = "Sahil", Latitude = 40.371751m, Longitude = 49.844644m, Address = "Bülbül prospekti — Çıxış 1", IsActive = true, CreatedAt = SeedDate },
+        new() { Id = new Guid("c8012026-1003-4000-8000-000000000025"), Version = new Guid("c8012026-1003-4000-8000-000000000025"), Name = "Ulduz", Latitude = 40.414779m, Longitude = 49.892668m, Address = "Rövşən Əliyev küçəsi — Çıxış 1", IsActive = true, CreatedAt = SeedDate },
+        new() { Id = new Guid("c8012026-1003-4000-8000-000000000026"), Version = new Guid("c8012026-1003-4000-8000-000000000026"), Name = "Xalqlar Dostluğu", Latitude = 40.398585m, Longitude = 49.952052m, Address = "Qara Qarayev prospekti — Çıxış 1", IsActive = true, CreatedAt = SeedDate },
+        new() { Id = new Guid("c8012026-1003-4000-8000-000000000027"), Version = new Guid("c8012026-1003-4000-8000-000000000027"), Name = "Xocəsən", Latitude = 40.421499m, Longitude = 49.778066m, Address = "Dairəvi yol — Çıxış 1", IsActive = true, CreatedAt = SeedDate },
+    ];
+}

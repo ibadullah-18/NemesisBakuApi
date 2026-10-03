@@ -25,6 +25,11 @@ public class Order : BaseEntity
     public string? Apartment { get; set; }
 
     public decimal? DeliveryDistanceKm { get; set; }
+    // Snapshots preserve the charged rule when metro records are edited later.
+    public Guid? MetroStationId { get; set; }
+    [MaxLength(120)] public string? MetroStationName { get; set; }
+    public decimal? MetroDistanceKm { get; set; }
+    [MaxLength(32)] public string? DeliveryPricingRule { get; set; }
 
     public DateTime? DeliveryDate { get; set; }
     public string? DeliveryTimeRange { get; set; }

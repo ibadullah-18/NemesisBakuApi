@@ -231,6 +231,7 @@ builder.Services
     .AddDefaultTokenProviders();
 
 builder.Services.AddScoped<JwtTokenGenerator>();
+builder.Services.AddScoped<NemesisBakuApi.Services.Implementations.DeliveryPricingService>();
 builder.Services.AddSingleton<OtpCodeHasher>();
 
 builder.Services.AddScoped<

@@ -10,6 +10,7 @@ public class CreateOrderDto
     public string CustomerPhoneNumber { get; set; } = null!;
 
     public DeliveryType DeliveryType { get; set; }
+    public Guid? MetroStationId { get; set; }
     public PaymentMethod PaymentMethod { get; set; }
 
     public string? AddressText { get; set; }

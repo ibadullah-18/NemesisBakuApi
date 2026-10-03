@@ -21,6 +21,10 @@ public class OrderDetailDto
     public string? Floor { get; set; }
     public string? Apartment { get; set; }
     public decimal? DeliveryDistanceKm { get; set; }
+    public Guid? MetroStationId { get; set; }
+    public string? MetroStationName { get; set; }
+    public decimal? MetroDistanceKm { get; set; }
+    public string? DeliveryPricingRule { get; set; }
 
     public DateTime? DeliveryDate { get; set; }
     public string? DeliveryTimeRange { get; set; }

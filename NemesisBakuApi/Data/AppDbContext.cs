@@ -49,6 +49,7 @@ public class AppDbContext
     public DbSet<UserAddress> UserAddresses { get; set; }
 
     public DbSet<PromoPage> PromoPages { get; set; }
+    public DbSet<MetroStation> MetroStations => Set<MetroStation>();
     public DbSet<ShowcaseGroup> ShowcaseGroups => Set<ShowcaseGroup>();
     public DbSet<ShowcaseBlock> ShowcaseBlocks => Set<ShowcaseBlock>();
     public DbSet<ShowcaseBlockProduct> ShowcaseBlockProducts => Set<ShowcaseBlockProduct>();
@@ -71,6 +72,13 @@ public class AppDbContext
         ModelBuilder builder)
     {
         base.OnModelCreating(builder);
+
+        builder.Entity<MetroStation>().HasQueryFilter(x => !x.IsDeleted);
+        builder.Entity<MetroStation>().Property(x => x.Latitude).HasPrecision(9, 6);
+        builder.Entity<MetroStation>().Property(x => x.Longitude).HasPrecision(9, 6);
+        builder.Entity<MetroStation>().HasIndex(x => x.Name).IsUnique();
+        builder.Entity<MetroStation>().HasData(MetroStationSeed.Stations);
+        builder.Entity<Order>().Property(x => x.MetroDistanceKm).HasPrecision(12, 4);
 
         builder.Entity<ShowcaseGroup>().HasQueryFilter(x => !x.IsDeleted);
         builder.Entity<ShowcaseGroup>().HasIndex(x => new { x.DisplayOrder, x.CreatedAt });

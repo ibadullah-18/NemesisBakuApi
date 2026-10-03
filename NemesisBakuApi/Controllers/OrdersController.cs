@@ -1,14 +1,12 @@
-﻿using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
-using Microsoft.Extensions.Options;
 using NemesisBakuApi.Data;
 using NemesisBakuApi.DTOs.Order;
 using NemesisBakuApi.Entities;
 using NemesisBakuApi.Enums;
 using NemesisBakuApi.Helpers;
 using NemesisBakuApi.Services.Interfaces;
-using NemesisBakuApi.Settings;
 using System.Security.Claims;
 
 namespace NemesisBakuApi.Controllers;
@@ -19,16 +17,16 @@ namespace NemesisBakuApi.Controllers;
 public class OrdersController : ControllerBase
 {
     private readonly AppDbContext _context;
-    private readonly DeliverySettings _deliverySettings;
+    private readonly NemesisBakuApi.Services.Implementations.DeliveryPricingService _deliveryPricing;
     private readonly ITelegramOrderNotificationOutbox _telegramOutbox;
 
     public OrdersController(
         AppDbContext context,
-        IOptions<DeliverySettings> deliveryOptions,
-        ITelegramOrderNotificationOutbox telegramOutbox)
+        ITelegramOrderNotificationOutbox telegramOutbox,
+        NemesisBakuApi.Services.Implementations.DeliveryPricingService deliveryPricing)
     {
         _context = context;
-        _deliverySettings = deliveryOptions.Value;
+        _deliveryPricing = deliveryPricing;
         _telegramOutbox = telegramOutbox;
     }
 
@@ -81,8 +79,7 @@ public class OrdersController : ControllerBase
                 ApiResponse<string>.Fail("Mağaza WhatsApp nömrəsi təyin edilməyib"));
         }
 
-        decimal deliveryPrice = 0;
-        decimal? deliveryDistanceKm = null;
+        CalculateDeliveryResultDto deliveryQuote;
 
         if (dto.DeliveryType == DeliveryType.HomeDelivery)
         {
@@ -139,37 +136,35 @@ public class OrdersController : ControllerBase
                         "Çatdırılma saat aralığı seçilməlidir"));
             }
 
-            if (!storeInfo.Latitude.HasValue ||
-                !storeInfo.Longitude.HasValue)
-            {
-                return BadRequest(
-                    ApiResponse<string>.Fail(
-                        "Mağaza koordinatları təyin edilməyib"));
-            }
-
-            deliveryDistanceKm =
-                DeliveryPriceCalculator.CalculateDistanceKm(
-                    storeInfo.Latitude.Value,
-                    storeInfo.Longitude.Value,
-                    dto.Latitude.Value,
-                    dto.Longitude.Value);
-
-            deliveryPrice =
-                DeliveryPriceCalculator.CalculateDeliveryPrice(
-                    deliveryDistanceKm.Value,
-                    _deliverySettings);
         }
         else if (dto.DeliveryType == DeliveryType.PickupFromStore)
         {
-            deliveryPrice = 0;
-            deliveryDistanceKm = null;
-
             dto.AddressText = null;
             dto.Latitude = null;
             dto.Longitude = null;
             dto.BuildingNumber = null;
             dto.Floor = null;
             dto.Apartment = null;
+        }
+
+        try
+        {
+            deliveryQuote = await _deliveryPricing.QuoteAsync(new CalculateDeliveryDto
+            {
+                DeliveryType = dto.DeliveryType, Latitude = dto.Latitude, Longitude = dto.Longitude,
+                MetroStationId = dto.DeliveryType == DeliveryType.MetroPickup ? dto.MetroStationId : null
+            }, cancellationToken);
+        }
+        catch (ArgumentException ex) { return BadRequest(ApiResponse<string>.Fail(ex.Message)); }
+
+        if (dto.DeliveryType == DeliveryType.MetroPickup)
+        {
+            if (!dto.DeliveryDate.HasValue || string.IsNullOrWhiteSpace(dto.DeliveryTimeRange))
+                return BadRequest(ApiResponse<string>.Fail("Metroda təhvil üçün tarix və saat seçin."));
+            dto.AddressText = $"{deliveryQuote.MetroStationName} metrosunda təhvil";
+            dto.Latitude = deliveryQuote.Latitude; dto.Longitude = deliveryQuote.Longitude;
+            dto.BuildingNumber = null; dto.Floor = null; dto.Apartment = null;
+            dto.SavedAddressId = null; dto.SaveAddressToProfile = false;
         }
 
         try
@@ -266,8 +261,12 @@ public class OrdersController : ControllerBase
                 DeliveryDate = dto.DeliveryDate,
                 DeliveryTimeRange = dto.DeliveryTimeRange?.Trim(),
 
-                DeliveryPrice = deliveryPrice,
-                DeliveryDistanceKm = deliveryDistanceKm,
+                DeliveryPrice = deliveryQuote.DeliveryPrice,
+                DeliveryDistanceKm = deliveryQuote.DistanceKm,
+                MetroStationId = deliveryQuote.MetroStationId,
+                MetroStationName = deliveryQuote.MetroStationName,
+                MetroDistanceKm = deliveryQuote.MetroDistanceKm,
+                DeliveryPricingRule = deliveryQuote.PricingRule,
 
                 Note = dto.Note?.Trim(),
                 Status = OrderStatus.Pending
@@ -428,8 +427,15 @@ public class OrdersController : ControllerBase
                 await _context.SaveChangesAsync(cancellationToken);
 
                 return Ok(
-                    ApiResponse<Guid>.Ok(
-                        order.Id,
+                    ApiResponse<object>.Ok(
+                        new
+                        {
+                            order.Id, order.OrderNumber, order.DeliveryType, order.AddressText,
+                            order.DeliveryPrice, order.DeliveryDistanceKm, order.DeliveryPricingRule,
+                            order.MetroStationId, order.MetroStationName, order.MetroDistanceKm,
+                            order.TotalProductPrice, order.PromoDiscountAmount, order.TotalPrice,
+                            order.DeliveryDate, order.DeliveryTimeRange
+                        },
                         "Sifariş uğurla yaradıldı"));
                 },
                 cancellationToken);
@@ -500,6 +506,10 @@ public class OrdersController : ControllerBase
                 DeliveryTimeRange = order.DeliveryTimeRange,
                 DeliveryPrice = order.DeliveryPrice,
                 DeliveryDistanceKm = order.DeliveryDistanceKm,
+                MetroStationId = order.MetroStationId,
+                MetroStationName = order.MetroStationName,
+                MetroDistanceKm = order.MetroDistanceKm,
+                DeliveryPricingRule = order.DeliveryPricingRule,
                 Note = order.Note,
                 TotalProductPrice = order.TotalProductPrice,
                 PromoDiscountAmount = order.PromoDiscountAmount,
@@ -538,60 +548,16 @@ public class OrdersController : ControllerBase
     }
 
     [HttpPost("calculate-delivery")]
-    public async Task<IActionResult> CalculateDelivery(
-        CalculateDeliveryDto dto)
+    public async Task<IActionResult> CalculateDelivery(CalculateDeliveryDto dto)
     {
-        var cancellationToken = HttpContext.RequestAborted;
-
-        if (dto.Latitude < -90 || dto.Latitude > 90)
+        try
         {
-            return BadRequest(
-                ApiResponse<string>.Fail("Latitude düzgün deyil"));
+            var result = await _deliveryPricing.QuoteAsync(dto, HttpContext.RequestAborted);
+            return Ok(ApiResponse<CalculateDeliveryResultDto>.Ok(result));
         }
-
-        if (dto.Longitude < -180 || dto.Longitude > 180)
+        catch (ArgumentException ex)
         {
-            return BadRequest(
-                ApiResponse<string>.Fail("Longitude düzgün deyil"));
+            return BadRequest(ApiResponse<string>.Fail(ex.Message));
         }
-
-        var storeInfo = await _context.StoreInfos
-            .AsNoTracking()
-            .FirstOrDefaultAsync(cancellationToken);
-
-        if (storeInfo == null)
-        {
-            return BadRequest(
-                ApiResponse<string>.Fail("Mağaza məlumatları tapılmadı"));
-        }
-
-        if (!storeInfo.Latitude.HasValue ||
-            !storeInfo.Longitude.HasValue)
-        {
-            return BadRequest(
-                ApiResponse<string>.Fail(
-                    "Mağaza koordinatları təyin edilməyib"));
-        }
-
-        var distanceKm =
-            DeliveryPriceCalculator.CalculateDistanceKm(
-                storeInfo.Latitude.Value,
-                storeInfo.Longitude.Value,
-                dto.Latitude,
-                dto.Longitude);
-
-        var deliveryPrice =
-            DeliveryPriceCalculator.CalculateDeliveryPrice(
-                distanceKm,
-                _deliverySettings);
-
-        var result = new CalculateDeliveryResultDto
-        {
-            DistanceKm = distanceKm,
-            DeliveryPrice = deliveryPrice
-        };
-
-        return Ok(
-            ApiResponse<CalculateDeliveryResultDto>.Ok(result));
     }
 }

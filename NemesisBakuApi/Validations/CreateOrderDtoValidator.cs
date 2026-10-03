@@ -69,6 +69,13 @@ public class CreateOrderDtoValidator
                 .WithMessage(
                     "Ödəniş üsulu düzgün deyil");
 
+        When(x => x.DeliveryType == DeliveryType.MetroPickup, () =>
+        {
+            RuleFor(x => x.MetroStationId).NotEmpty().WithMessage("Metro stansiyası seçin.");
+            RuleFor(x => x.DeliveryDate).NotNull().WithMessage("Təhvil tarixi seçin.");
+            RuleFor(x => x.DeliveryTimeRange).NotEmpty().MaximumLength(100).WithMessage("Təhvil saatını seçin.");
+        });
+
         RuleFor(x => x.Note)
             .MaximumLength(1000)
                 .When(x =>

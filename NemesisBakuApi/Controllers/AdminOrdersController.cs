@@ -164,6 +164,10 @@ public class AdminOrdersController : ControllerBase
                 order.DeliveryTimeRange,
 
             DeliveryPrice = order.DeliveryPrice,
+            MetroStationId = order.MetroStationId,
+            MetroStationName = order.MetroStationName,
+            MetroDistanceKm = order.MetroDistanceKm,
+            DeliveryPricingRule = order.DeliveryPricingRule,
             DeliveryDistanceKm =
                 order.DeliveryDistanceKm,
 

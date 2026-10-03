@@ -10,7 +10,8 @@ public static class DeliveryPriceCalculator
         decimal storeLat,
         decimal storeLng,
         decimal customerLat,
-        decimal customerLng)
+        decimal customerLng,
+        bool round = true)
     {
         ValidateCoordinates(
             storeLat,
@@ -65,6 +66,8 @@ public static class DeliveryPriceCalculator
 
         var distance =
             EarthRadiusKm * centralAngle;
+
+        if (!round) return (decimal)distance;
 
         return Math.Round(
             (decimal)distance,
