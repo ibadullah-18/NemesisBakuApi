@@ -1,6 +1,6 @@
 services:
   osrm:
-    image: ghcr.io/project-osrm/osrm-backend:v26.10.0
+    image: ghcr.io/project-osrm/osrm-backend:v6.0.0
     command: [osrm-routed, --algorithm, ch, --threads, '2', --max-table-size, '100', /data/azerbaijan-latest.osrm]
     volumes:
       - ${OSRM_DATA_DIR:?Set OSRM_DATA_DIR to the prepared absolute dataset directory}:/data:ro

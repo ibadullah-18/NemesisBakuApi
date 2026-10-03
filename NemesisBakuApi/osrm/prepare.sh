@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 # Run on the Linux VPS. Prepare a new directory; never modify the serving dataset.
-image=ghcr.io/project-osrm/osrm-backend:v26.10.0
+image=ghcr.io/project-osrm/osrm-backend:v6.0.0
 root="${1:?Usage: bash osrm/prepare.sh /absolute/path/to/new-dataset-directory}"
 [[ "$root" = /* ]] || { echo 'An absolute directory is required.' >&2; exit 1; }
 [[ ! -e "$root" ]] || { echo 'Choose a new directory; existing data is preserved.' >&2; exit 1; }
