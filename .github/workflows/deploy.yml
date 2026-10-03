@@ -3,7 +3,7 @@ name: Deploy NemesisBaku Backend
 on:
   push:
     branches:
-      - master
+      - main
 
 jobs:
   deploy:
@@ -20,10 +20,12 @@ jobs:
             set -e
 
             cd /opt/nemesisbaku/backend
-            git pull origin master
+            git pull --no-rebase origin main
 
             cd /opt/nemesisbaku/backend/NemesisBakuApi
-            docker compose build api
-            docker compose up -d api nginx
+            docker compose -f docker-compose.yml -f docker-compose.osrm.yml config --quiet
+            docker compose -f docker-compose.yml -f docker-compose.osrm.yml build api
+            docker compose -f docker-compose.yml -f docker-compose.osrm.yml up -d --no-deps api
+            docker compose exec -T nginx nginx -s reload
 
             docker image prune -f
