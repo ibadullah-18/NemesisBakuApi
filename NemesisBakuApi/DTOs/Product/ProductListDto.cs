@@ -2,6 +2,7 @@
 
 public class ProductListDto
 {
+    public List<string> Images { get; set; } = [];
     public Guid Id { get; set; }
     public string Name { get; set; } = null!;
     public string ProductCode { get; set; } = null!;

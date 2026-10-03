@@ -3,6 +3,7 @@ using System;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Metadata;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using NemesisBakuApi.Data;
 
@@ -11,9 +12,11 @@ using NemesisBakuApi.Data;
 namespace NemesisBakuApi.Migrations
 {
     [DbContext(typeof(AppDbContext))]
-    partial class AppDbContextModelSnapshot : ModelSnapshot
+    [Migration("20261003164730_AddTrafficStatisticsPeriods")]
+    partial class AddTrafficStatisticsPeriods
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder
@@ -1844,10 +1847,6 @@ namespace NemesisBakuApi.Migrations
                     b.Property<DateTime>("CreatedAt")
                         .HasColumnType("datetime2");
 
-                    b.Property<string>("EventId")
-                        .HasMaxLength(128)
-                        .HasColumnType("nvarchar(128)");
-
                     b.Property<string>("IpAddress")
                         .HasColumnType("nvarchar(max)");
 
@@ -1877,10 +1876,6 @@ namespace NemesisBakuApi.Migrations
                         .HasColumnType("nvarchar(450)");
 
                     b.HasKey("Id");
-
-                    b.HasIndex("EventId")
-                        .IsUnique()
-                        .HasFilter("[EventId] IS NOT NULL");
 
                     b.HasIndex("UserId");
 

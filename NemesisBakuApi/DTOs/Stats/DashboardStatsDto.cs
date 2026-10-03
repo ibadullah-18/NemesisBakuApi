@@ -20,6 +20,11 @@ public class DashboardStatsDto
 
     public int TotalPageViews { get; set; }
     public int UniqueVisitors { get; set; }
+    public int VisitSessions { get; set; }
+    public DateTime? TrafficFromUtc { get; set; }
+    public DateTime? TrafficToUtc { get; set; }
+    public DateTime? TrafficStatisticsStartsAtUtc { get; set; }
+    public int? TrafficRetentionDays { get; set; }
 
     public int WhatsAppProductClicks { get; set; }
     public int WhatsAppBasketClicks { get; set; }

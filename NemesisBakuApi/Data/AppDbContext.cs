@@ -41,6 +41,7 @@ public class AppDbContext
 
     public DbSet<UserActivityLog> UserActivityLogs { get; set; }
     public DbSet<SiteVisit> SiteVisits { get; set; }
+    public DbSet<TrafficStatisticsPeriod> TrafficStatisticsPeriods => Set<TrafficStatisticsPeriod>();
     public DbSet<StoreInfo> StoreInfos { get; set; }
     public DbSet<RefreshToken> RefreshTokens { get; set; }
 
@@ -314,6 +315,8 @@ public class AppDbContext
 
         builder.Entity<SiteVisit>()
             .HasIndex(x => x.VisitorId);
+        builder.Entity<SiteVisit>().HasIndex(x => x.EventId).IsUnique()
+            .HasFilter("[EventId] IS NOT NULL");
 
         builder.Entity<SiteVisit>()
             .HasIndex(x => x.VisitedAt);

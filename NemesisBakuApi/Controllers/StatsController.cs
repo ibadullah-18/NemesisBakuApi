@@ -1,7 +1,9 @@
-﻿using System.Security.Claims;
+using System.Security.Claims;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Options;
+using NemesisBakuApi.Settings;
 using NemesisBakuApi.Data;
 using NemesisBakuApi.DTOs.Stats;
 using NemesisBakuApi.Entities;
@@ -14,14 +16,13 @@ namespace NemesisBakuApi.Controllers;
 [Route("api/[controller]")]
 public class StatsController : ControllerBase
 {
-    private static readonly TimeSpan VisitDeduplicationWindow =
-        TimeSpan.FromMinutes(30);
-
     private readonly AppDbContext _context;
+    private readonly DatabaseCleanupSettings _cleanup;
 
-    public StatsController(AppDbContext context)
+    public StatsController(AppDbContext context, IOptions<DatabaseCleanupSettings>? cleanup = null)
     {
         _context = context;
+        _cleanup = cleanup?.Value ?? new DatabaseCleanupSettings();
     }
 
     private Guid? GetUserIdOrNull()
@@ -46,7 +47,11 @@ public class StatsController : ControllerBase
         TrackVisitDto dto,
         CancellationToken cancellationToken)
     {
-        if (string.IsNullOrWhiteSpace(dto.VisitorId))
+        // Old clients reported only home visits: never mix those with page views.
+        if (string.IsNullOrWhiteSpace(dto.EventId))
+            return Ok(ApiResponse<string>.Ok("Köhnə ziyarət formatı nəzərə alınmadı"));
+        if (string.IsNullOrWhiteSpace(dto.VisitorId) || string.IsNullOrWhiteSpace(dto.SessionId) ||
+            dto.VisitorId.Length > 128 || dto.EventId.Length > 128 || dto.SessionId.Length > 128)
         {
             return BadRequest(
                 ApiResponse<string>.Fail(
@@ -57,20 +62,21 @@ public class StatsController : ControllerBase
             dto.VisitorId.Trim(),
             128)!;
 
-        var pageUrl = string.IsNullOrWhiteSpace(dto.PageUrl)
-            ? null
-            : LimitLength(dto.PageUrl.Trim(), 500);
-
-        var deduplicationCutoff =
-            DateTime.UtcNow - VisitDeduplicationWindow;
+        var pageUrl = dto.PageUrl?.Trim().Split('?', '#')[0];
+        if (string.IsNullOrEmpty(pageUrl) || !pageUrl.StartsWith('/') || pageUrl.StartsWith("//") || pageUrl.Length > 500)
+            return BadRequest(ApiResponse<string>.Fail("Səhifə yolu düzgün deyil"));
+        var firstSegment = pageUrl.Split('/', StringSplitOptions.RemoveEmptyEntries).FirstOrDefault()?.ToLowerInvariant();
+        var agent = Request.Headers.UserAgent.ToString();
+        if (firstSegment is "admin" or "superadmin" or "api" or "tests" ||
+            User.IsInRole("Admin") || User.IsInRole("SuperAdmin") ||
+            System.Text.RegularExpressions.Regex.IsMatch(agent, "bot|crawler|spider|headless|lighthouse|pagespeed|selenium|playwright", System.Text.RegularExpressions.RegexOptions.IgnoreCase))
+            return Ok(ApiResponse<string>.Ok("Daxili və avtomatik baxış nəzərə alınmadı"));
 
         var recentlyTracked = await _context.SiteVisits
             .AsNoTracking()
             .AnyAsync(
                 x =>
-                    x.VisitorId == visitorId &&
-                    x.PageUrl == pageUrl &&
-                    x.VisitedAt >= deduplicationCutoff,
+                    x.EventId == dto.EventId,
                 cancellationToken);
 
         if (recentlyTracked)
@@ -84,6 +90,8 @@ public class StatsController : ControllerBase
         {
             UserId = GetUserIdOrNull(),
             VisitorId = visitorId,
+            EventId = dto.EventId,
+            SessionId = dto.SessionId,
             PageUrl = pageUrl,
 
             IpAddress = LimitLength(
@@ -101,19 +109,41 @@ public class StatsController : ControllerBase
 
         _context.SiteVisits.Add(visit);
 
-        await _context.SaveChangesAsync(
-            cancellationToken);
+        try { await _context.SaveChangesAsync(cancellationToken); }
+        catch (DbUpdateException ex) when (ex.InnerException is Microsoft.Data.SqlClient.SqlException { Number: 2601 or 2627 })
+        {
+            _context.Entry(visit).State = EntityState.Detached;
+            return Ok(ApiResponse<string>.Ok("Baxış artıq qeydə alınıb"));
+        }
 
         return Ok(
             ApiResponse<string>.Ok(
                 "Visit qeydə alındı"));
     }
 
+    private Task<DateTime?> GetTrafficStartAsync(CancellationToken ct) =>
+        _context.TrafficStatisticsPeriods.AsNoTracking()
+            .Select(x => (DateTime?)x.StartsAtUtc).MaxAsync(ct);
+
+    [Authorize(Roles = "SuperAdmin")]
+    [HttpPost("traffic/restart")]
+    public async Task<IActionResult> RestartTrafficStatistics(CancellationToken cancellationToken)
+    {
+        var userId = GetUserIdOrNull();
+        if (!userId.HasValue) return Unauthorized();
+        var period = new TrafficStatisticsPeriod { StartsAtUtc = DateTime.UtcNow, StartedByUserId = userId.Value };
+        _context.TrafficStatisticsPeriods.Add(period);
+        await _context.SaveChangesAsync(cancellationToken);
+        return Ok(ApiResponse<DateTime>.Ok(period.StartsAtUtc, "Ziyarət statistikası yeni tarixdən başladıldı."));
+    }
+
     [Authorize(Roles = "SuperAdmin")]
     [HttpGet("dashboard")]
     public async Task<IActionResult> GetDashboardStats(
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken, [FromQuery] DateTimeOffset? from = null, [FromQuery] DateTimeOffset? to = null)
     {
+        if (from.HasValue && to.HasValue && from >= to)
+            return BadRequest(ApiResponse<string>.Fail("Tarix aralığı düzgün deyil"));
         var userStats = await _context.Users
             .AsNoTracking()
             .Where(x => !x.IsDeleted)
@@ -192,20 +222,11 @@ public class StatsController : ControllerBase
                 .Distinct()
                 .CountAsync(cancellationToken);
 
-        var visitStats = await _context.SiteVisits
-            .AsNoTracking()
-            .GroupBy(x => 1)
-            .Select(group => new
-            {
-                Total = group.Count(),
-
-                Unique = group
-                    .Select(x => x.VisitorId)
-                    .Distinct()
-                    .Count()
-            })
-            .FirstOrDefaultAsync(
-                cancellationToken);
+        var trafficStart = await GetTrafficStartAsync(cancellationToken);
+        var trafficFrom = from?.UtcDateTime;
+        if (trafficStart.HasValue && (!trafficFrom.HasValue || trafficFrom < trafficStart)) trafficFrom = trafficStart;
+        var trafficTo = to?.UtcDateTime;
+        var visitStats = await TrafficStatisticsQuery.ReadAsync(_context.SiteVisits, trafficFrom, trafficTo, cancellationToken);
 
         var whatsappStats =
             await _context.WhatsAppClickLogs
@@ -257,6 +278,12 @@ public class StatsController : ControllerBase
                 visitStats?.Total ?? 0,
             UniqueVisitors =
                 visitStats?.Unique ?? 0,
+            VisitSessions = visitStats?.Sessions ?? 0,
+            TrafficFromUtc = trafficFrom.HasValue ? DateTime.SpecifyKind(trafficFrom.Value, DateTimeKind.Utc) : null,
+            TrafficToUtc = trafficTo.HasValue ? DateTime.SpecifyKind(trafficTo.Value, DateTimeKind.Utc) : null,
+            TrafficStatisticsStartsAtUtc = trafficStart.HasValue
+                ? DateTime.SpecifyKind(trafficStart.Value, DateTimeKind.Utc) : null,
+            TrafficRetentionDays = _cleanup.Enabled ? Math.Max(1, _cleanup.SiteVisitRetentionDays) : null,
 
             WhatsAppProductClicks =
                 whatsappStats?.ProductClicks ?? 0,

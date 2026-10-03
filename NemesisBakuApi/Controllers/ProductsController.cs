@@ -186,6 +186,8 @@ public class ProductsController : ControllerBase
                     .ThenBy(i => i.Order)
                     .Select(i => i.ImageUrl)
                     .FirstOrDefault(),
+                Images = x.Images.OrderByDescending(i => i.IsMain).ThenBy(i => i.Order)
+                    .Select(i => i.ImageUrl).ToList(),
                 TotalStock = x.Variants
                     .Where(v => v.IsActive)
                     .Sum(v => v.StockCount)
