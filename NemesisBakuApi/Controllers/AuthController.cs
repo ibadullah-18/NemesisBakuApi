@@ -1,4 +1,4 @@
-﻿using System.Security.Cryptography;
+using System.Security.Cryptography;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.RateLimiting;
@@ -18,6 +18,7 @@ namespace NemesisBakuApi.Controllers;
 public class AuthController : ControllerBase
 {
     private const int MaximumOtpAttempts = 5;
+    private readonly OtpSendLimiter _otpSendLimiter;
 
     private readonly UserManager<AppUser> _userManager;
     private readonly SignInManager<AppUser> _signInManager;
@@ -34,7 +35,8 @@ public class AuthController : ControllerBase
         AppDbContext context,
         IEmailService emailService,
         IFileService fileService,
-        OtpCodeHasher otpCodeHasher)
+        OtpCodeHasher otpCodeHasher,
+        OtpSendLimiter otpSendLimiter)
     {
         _userManager = userManager;
         _signInManager = signInManager;
@@ -43,6 +45,7 @@ public class AuthController : ControllerBase
         _emailService = emailService;
         _fileService = fileService;
         _otpCodeHasher = otpCodeHasher;
+        _otpSendLimiter = otpSendLimiter;
     }
 
     [HttpPost("login")]
@@ -507,6 +510,24 @@ public class AuthController : ControllerBase
             string successMessage,
             CancellationToken cancellationToken)
     {
+        var now = DateTime.UtcNow;
+        var recent = await _context.UserOtpCodes.AsNoTracking()
+            .Where(x => x.Email == otpIdentity && x.Purpose == purpose && x.CreatedAt > now.AddMinutes(-10))
+            .OrderBy(x => x.CreatedAt).Select(x => x.CreatedAt).ToListAsync(cancellationToken);
+        var wait = recent.Count >= 5 ? recent[0].AddMinutes(10) - now
+            : recent.Count > 0 ? recent[^1].AddSeconds(60) - now : TimeSpan.Zero;
+        if (wait > TimeSpan.Zero)
+        {
+            Response.Headers.RetryAfter = Math.Ceiling(wait.TotalSeconds).ToString(System.Globalization.CultureInfo.InvariantCulture);
+            return StatusCode(429, ApiResponse<string>.Fail("Bu email üçün kod artıq istənilib. Göstərilən müddətdən sonra yenidən cəhd edin."));
+        }
+        using var lease = _otpSendLimiter.Acquire(otpIdentity, purpose.ToString());
+        if (!lease.IsAcquired)
+        {
+            Response.Headers.RetryAfter = "60";
+            return StatusCode(429, ApiResponse<string>.Fail("Kod sorğusu artıq göndərilir. Bir dəqiqə gözləyin."));
+        }
+
         await InvalidatePreviousOtpsAsync(
             otpIdentity,
             purpose,

@@ -1,4 +1,4 @@
-﻿using System.Security.Claims;
+using System.Security.Claims;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
@@ -748,6 +748,12 @@ Müştəri:
 
 Telefon:
 {order.CustomerPhoneNumber}
+
+Çatdırılma tarixi:
+{order.DeliveryDate:dd.MM.yyyy}
+
+Çatdırılma saatı:
+{order.DeliveryTimeRange}
 
 Ünvan:
 {order.AddressText}

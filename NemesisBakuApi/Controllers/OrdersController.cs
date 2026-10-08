@@ -158,6 +158,9 @@ public class OrdersController : ControllerBase
         catch (ArgumentException ex) { return BadRequest(ApiResponse<string>.Fail(ex.Message)); }
         catch (RoadRoutingException ex) { return StatusCode(503, ApiResponse<string>.Fail(ex.Message)); }
 
+        if (DeliveryTimeRules.RequiresExactTime(deliveryQuote.PricingRule) && !DeliveryTimeRules.IsExactTime(dto.DeliveryTimeRange))
+            return BadRequest(ApiResponse<string>.Fail("Metro çatdırılması üçün dəqiq saat seçin (HH:mm)."));
+
         if (dto.DeliveryType == DeliveryType.MetroPickup)
         {
             if (!dto.DeliveryDate.HasValue || string.IsNullOrWhiteSpace(dto.DeliveryTimeRange))

@@ -385,6 +385,8 @@ builder.Services.Configure<
             CompressionLevel.Fastest;
     });
 
+builder.Services.AddSingleton<OtpSendLimiter>();
+
 builder.Services.AddRateLimiter(options =>
 {
     options.RejectionStatusCode =
@@ -424,6 +426,9 @@ builder.Services.AddRateLimiter(options =>
         context,
         cancellationToken) =>
     {
+        if (context.Lease.TryGetMetadata(MetadataName.RetryAfter, out var retryAfter))
+            context.HttpContext.Response.Headers.RetryAfter = Math.Ceiling(retryAfter.TotalSeconds).ToString(System.Globalization.CultureInfo.InvariantCulture);
+
         context.HttpContext.Response.ContentType =
             "application/json; charset=utf-8";
 
